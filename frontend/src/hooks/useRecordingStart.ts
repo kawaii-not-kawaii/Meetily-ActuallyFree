@@ -14,6 +14,11 @@ import Analytics from '@/lib/analytics';
 import { showRecordingNotification } from '@/lib/recordingNotification';
 import { toast } from 'sonner';
 import { describeStartError } from '@/lib/recording-start-errors';
+import {
+  getProviderCommands,
+  hasDownloadingModel,
+  type ModelWithStatus,
+} from '@/lib/transcription-model-readiness';
 
 interface UseRecordingStartReturn {
   handleRecordingStart: () => Promise<void>;
@@ -107,22 +112,20 @@ export function useRecordingStart(
     }
   }, [transcriptModelConfig]);
 
-  // Check if any model is currently downloading
+  // Check whether the configured provider's model is still downloading
+  // (upstream #639: this used to ask Parakeet even for Whisper users).
   const checkIfModelDownloading = useCallback(async (): Promise<boolean> => {
+    const provider = (transcriptModelConfig?.provider || 'parakeet').toLowerCase();
+    const commands = getProviderCommands(provider.includes('parakeet') ? 'parakeet' : 'localWhisper');
+    if (!commands) return false;
     try {
-      const models = await invoke<any[]>('parakeet_get_available_models');
-      return models.some(m =>
-        m.status && (
-          typeof m.status === 'object'
-            ? 'Downloading' in m.status
-            : m.status === 'Downloading'
-        )
-      );
+      const models = await invoke<ModelWithStatus[]>(commands.getAvailableModels);
+      return hasDownloadingModel(models);
     } catch (error) {
       console.error('Failed to check model download status:', error);
       return false;
     }
-  }, []);
+  }, [transcriptModelConfig]);
 
   /** Says why recording can't start yet, and offers the model setup when that's the reason. */
   const reportModelNotReady = useCallback(async (source: StartSource) => {
