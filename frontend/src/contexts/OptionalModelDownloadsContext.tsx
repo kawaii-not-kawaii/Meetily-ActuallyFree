@@ -101,7 +101,7 @@ export function OptionalModelDownloadsProvider({ children }: { children: React.R
       const model = models.find(m => m.name === OPTIONAL_WHISPER_MODEL);
       if (model?.status === 'Available') update('whisper', { status: 'ready', progress: 100, enabled: config.provider === 'whisper' && config.model === OPTIONAL_WHISPER_MODEL });
       else if (model?.status && typeof model.status === 'object' && 'Downloading' in model.status) {
-        update('whisper', { status: 'downloading', progress: Number(model.status.Downloading) || 0 });
+        update('whisper', { status: 'downloading', progress: Number((model.status as { Downloading?: { progress?: unknown } }).Downloading?.progress) || 0 });
       }
     }).catch(() => {});
     void invoke<{ nemotron_available: boolean; active_engine: string }>('diarization_get_status').then(status => {
