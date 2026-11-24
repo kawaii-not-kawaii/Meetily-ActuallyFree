@@ -21,6 +21,8 @@ echo "Building the Apple Silicon llama-helper sidecar..."
 (
     cd "$REPO_DIR"
     # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+    # The CMake hook forces GGML_NATIVE=OFF so the helper is not tuned to this Mac's CPU.
+    CMAKE_PROJECT_INCLUDE="$REPO_DIR/.github/force-portable-ggml.cmake" \
     CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release --package llama-helper --target "$TARGET" --features metal
 )
 

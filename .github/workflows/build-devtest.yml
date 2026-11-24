@@ -378,7 +378,15 @@ jobs:
 
           # Build llama-helper from workspace root
           # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+          # Force GGML_NATIVE=OFF so the helper is not tuned to the runner's CPU
+          # (llama-cpp-sys-2 forwards CMAKE_* env vars to CMake). Windows already
+          # has this hook from the portability step.
+          export CMAKE_PROJECT_INCLUDE="${CMAKE_PROJECT_INCLUDE:-$GITHUB_WORKSPACE/.github/force-portable-ggml.cmake}"
           CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release -p llama-helper $LLAMA_FEATURES
+          # x86_64 is where a host-tuned build can emit AVX-512 and crash users.
+          if [[ "${{ matrix.platform }}" != *"macos"* ]]; then
+            node .github/verify-portable-ggml.cjs target/release llama
+          fi
 
           # Determine binary extension
           EXT=""

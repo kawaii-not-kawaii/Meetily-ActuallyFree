@@ -679,6 +679,11 @@ jobs:
             exit $LASTEXITCODE
           }
 
+          # CMAKE_PROJECT_INCLUDE from the portability step also forces
+          # GGML_NATIVE=OFF in llama-cpp-sys-2; check before shipping the helper.
+          node .github/verify-portable-ggml.cjs target/release llama
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           # Copy binary to binaries directory
           New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
           Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe"

@@ -15,7 +15,7 @@ GGML_AVX512_VNNI:BOOL=OFF
 GGML_AVX512_BF16:BOOL=OFF
 `;
 
-function runGuard(t, caches, buildPath = 'target/release') {
+function runGuard(t, caches, buildPath = 'target/release', component) {
   const root = mkdtempSync(join(tmpdir(), 'portable-ggml-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const [path, content] of Object.entries(caches)) {
@@ -23,7 +23,8 @@ function runGuard(t, caches, buildPath = 'target/release') {
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, 'CMakeCache.txt'), content);
   }
-  return spawnSync(process.execPath, [guard, buildPath], { cwd: root, encoding: 'utf8' });
+  const args = component === undefined ? [guard, buildPath] : [guard, buildPath, component];
+  return spawnSync(process.execPath, args, { cwd: root, encoding: 'utf8' });
 }
 
 test('accepts portable Whisper configuration with AVX2 enabled', (t) => {
@@ -66,4 +67,30 @@ test('does not let one safe cache hide an unsafe cache in the selected build', (
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /GGML_NATIVE must be explicitly OFF/);
+});
+
+test('accepts a portable llama-helper ggml build', (t) => {
+  const result = runGuard(t, { 'target/release/build/llama-cpp-sys-2-abc': portableCache }, 'target/release', 'llama');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Verified llama-helper CPU portability/);
+});
+
+test('rejects missing llama-helper evidence even if Whisper is portable', (t) => {
+  const result = runGuard(t, { 'target/release/build/whisper-rs-sys-abc': portableCache }, 'target/release', 'llama');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /No llama-helper CMake cache/);
+});
+
+test('rejects a native llama-helper ggml build', (t) => {
+  const result = runGuard(t, {
+    'target/release/build/llama-cpp-sys-2-abc': portableCache.replace('GGML_NATIVE:BOOL=OFF', 'GGML_NATIVE:BOOL=ON'),
+  }, 'target/release', 'llama');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /GGML_NATIVE must be explicitly OFF/);
+});
+
+test('rejects an unknown component', (t) => {
+  const result = runGuard(t, { 'target/release/build/llama-cpp-sys-2-abc': portableCache }, 'target/release', 'llamas');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Usage:/);
 });
