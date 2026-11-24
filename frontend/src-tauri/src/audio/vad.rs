@@ -333,6 +333,10 @@ impl ContinuousVadProcessor {
               self.in_speech, self.current_speech.len(), self.buffer.len(), self.speech_segments.len());
 
         let mut completed_segments = Vec::new();
+        // The last frame is zero-padded to `chunk_size` below; remember where the
+        // real (16 kHz, post-resampling) audio ends so the forced segment's end
+        // timestamp and payload exclude that padding (upstream cda2ff0/bc00314).
+        let real_end_sample = self.processed_samples + self.buffer.len();
 
         // Process any remaining buffered audio
         if !self.buffer.is_empty() {
@@ -350,6 +354,21 @@ impl ContinuousVadProcessor {
 
         // Force end any ongoing speech
         if self.in_speech && !self.current_speech.is_empty() {
+            // `current_speech` covers [speech_start_sample, processed_samples),
+            // which now includes the padding. Trim it to the real interval and
+            // derive the end from the payload so the two always agree.
+            let real_sample_count = real_end_sample.saturating_sub(self.speech_start_sample);
+            if real_sample_count == 0 {
+                warn!(
+                    "VAD flush: dropping forced segment with empty/reversed interval [{}, {})",
+                    self.speech_start_sample, real_end_sample
+                );
+                self.current_speech.clear();
+                self.in_speech = false;
+            }
+            self.current_speech.truncate(real_sample_count);
+        }
+        if self.in_speech && !self.current_speech.is_empty() {
             let sum_sq: f32 = self.current_speech.iter().map(|&x| x * x).sum();
             let rms = (sum_sq / self.current_speech.len() as f32).sqrt();
             let peak = self.current_speech.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
@@ -358,7 +377,8 @@ impl ContinuousVadProcessor {
             // would discard quiet remote voices regardless of confidence.
             if peak > 0.0 {
                 let start_ms = (self.speech_start_sample as f64 / 16000.0) * 1000.0;
-                let end_ms = (self.processed_samples as f64 / 16000.0) * 1000.0;
+                let end_sample = self.speech_start_sample + self.current_speech.len();
+                let end_ms = (end_sample as f64 / 16000.0) * 1000.0;
 
                 debug!("VAD flush: Force-ending speech - start={}ms, end={}ms, duration={}ms, samples={} (rms={:.5}, peak={:.5})",
                       start_ms, end_ms, end_ms - start_ms, self.current_speech.len(), rms, peak);
@@ -758,6 +778,72 @@ mod tests {
         }
 
         samples
+    }
+
+    fn generate_late_speech_audio(
+        silence_seconds: f32,
+        speech_seconds: f32,
+        sample_rate: u32,
+    ) -> Vec<f32> {
+        let silence_samples = (silence_seconds * sample_rate as f32) as usize;
+        let mut samples = vec![0.0f32; silence_samples];
+        samples.extend_from_slice(&generate_test_audio_with_speech(speech_seconds, sample_rate));
+        samples
+    }
+
+    /// Ported from upstream cda2ff0/bc00314: a forced segment's timestamps and
+    /// samples must describe the same real audio interval, excluding the zero
+    /// padding `flush()` adds to the final VAD frame.
+    #[test]
+    fn test_flush_segment_timestamps_stay_within_audio_duration() {
+        const VAD_SAMPLE_RATE: usize = 16000;
+        let audio = generate_late_speech_audio(20.0, 3.0, 16000);
+        let audio_duration_ms = (audio.len() as f64 / VAD_SAMPLE_RATE as f64) * 1000.0;
+
+        assert_eq!(audio.len(), 368_000);
+        assert_eq!(
+            audio.len() % 480,
+            320,
+            "fixture must require 160 samples of terminal VAD padding"
+        );
+
+        let mut processor =
+            ContinuousVadProcessor::new(16000, 2000).expect("Failed to create processor");
+        let segments = processor.process_audio(&audio).expect("process_audio failed");
+        assert!(
+            segments.is_empty(),
+            "process_audio completed a segment, so flush() would not exercise force-end"
+        );
+        assert!(processor.in_speech, "expected to still be mid-speech before flush()");
+
+        let flushed = processor.flush().expect("flush failed");
+        assert_eq!(flushed.len(), 1, "force-end must emit exactly one segment");
+
+        let segment = &flushed[0];
+        let start_sample =
+            ((segment.start_timestamp_ms / 1000.0) * VAD_SAMPLE_RATE as f64).round() as usize;
+        assert!(segment.start_timestamp_ms <= audio_duration_ms);
+        assert_eq!(
+            segment.end_timestamp_ms, 23_000.0,
+            "forced segment must end at the real audio endpoint"
+        );
+        assert!(segment.end_timestamp_ms >= segment.start_timestamp_ms);
+        assert_eq!(
+            segment.samples.as_slice(),
+            &audio[start_sample..],
+            "forced payload must contain the exact real audio interval named by its timestamps"
+        );
+
+        let timestamp_sample_count = (((segment.end_timestamp_ms - segment.start_timestamp_ms)
+            / 1000.0)
+            * VAD_SAMPLE_RATE as f64)
+            .round() as usize;
+        assert_eq!(timestamp_sample_count, segment.samples.len());
+
+        assert!(
+            processor.flush().expect("second flush failed").is_empty(),
+            "flush() must not emit the same forced segment twice"
+        );
     }
 
     #[test]
