@@ -37,21 +37,14 @@ static MODELS_CACHE: RwLock<Option<CacheEntry>> = RwLock::new(None);
 /// Cache TTL in seconds
 const CACHE_TTL_SECS: u64 = 300;
 
-/// Fallback models when API fetch fails (matches frontend hardcoded values)
-const FALLBACK_MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-4-5-20250929", "Claude 4.5 Sonnet"),
-    ("claude-haiku-4-5-20251001", "Claude 4.5 Haiku"),
-    ("claude-opus-4-1-20250805", "Claude 4.1 Opus"),
-    ("claude-sonnet-4-20250514", "Claude 4 Sonnet"),
-];
-
-/// Get fallback models as AnthropicModel vec
+/// Fallback models when the API fetch fails. The list lives once in the shared
+/// catalog JSON, which the TypeScript settings UI also reads.
 fn get_fallback_models() -> Vec<AnthropicModel> {
-    FALLBACK_MODELS
+    crate::summary::llm_client::claude_fallback_models()
         .iter()
-        .map(|(id, name)| AnthropicModel {
-            id: id.to_string(),
-            display_name: Some(name.to_string()),
+        .map(|m| AnthropicModel {
+            id: m.id.clone(),
+            display_name: Some(m.name.clone()),
         })
         .collect()
 }

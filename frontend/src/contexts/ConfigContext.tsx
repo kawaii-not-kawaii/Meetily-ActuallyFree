@@ -6,6 +6,7 @@ import { SelectedDevices } from '@/components/DeviceSelection';
 import { configService, ModelConfig } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { CLAUDE_FALLBACK_MODELS } from '@/lib/claude-output-tokens';
 
 export interface OllamaModel {
   name: string;
@@ -370,7 +371,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   // Calculate model options based on available models
   const modelOptions: Record<ModelConfig['provider'], string[]> = {
     ollama: models.map(model => model.name),
-    claude: ['claude-3-5-sonnet-latest'],
+    claude: CLAUDE_FALLBACK_MODELS.map(m => m.id),
     'claude-cli': ['sonnet', 'opus', 'haiku', 'default'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],

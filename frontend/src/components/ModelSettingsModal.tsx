@@ -38,7 +38,7 @@ import {
   listClaudeCliModels,
 } from '@/lib/claude-cli';
 import { toast } from 'sonner';
-import { claudeOutputBudget, parseClaudeOutputTokens } from '@/lib/claude-output-tokens';
+import { CLAUDE_FALLBACK_MODELS, claudeOutputBudget, parseClaudeOutputTokens } from '@/lib/claude-output-tokens';
 
 export interface ModelConfig {
   provider: 'ollama' | 'groq' | 'claude' | 'claude-cli' | 'openai' | 'openrouter' | 'builtin-ai' | 'custom-openai';
@@ -101,12 +101,6 @@ const OPENAI_FALLBACK_MODELS = [
   'o3-mini',
 ];
 
-const CLAUDE_FALLBACK_MODELS = [
-  'claude-sonnet-4-5-20250929',
-  'claude-haiku-4-5-20251001',
-  'claude-opus-4-5-20251101',
-  'claude-3-5-sonnet-latest',
-];
 
 const GROQ_FALLBACK_MODELS = [
   'llama-3.3-70b-versatile',
@@ -248,7 +242,7 @@ export function ModelSettingsModal({
 
   const modelOptions: Record<string, string[]> = {
     ollama: models.map((model) => model.name),
-    claude: claudeModels.length > 0 ? claudeModels : CLAUDE_FALLBACK_MODELS,
+    claude: claudeModels.length > 0 ? claudeModels : CLAUDE_FALLBACK_MODELS.map(m => m.id),
     'claude-cli': claudeCliModels,
     groq: groqModels.length > 0 ? groqModels : GROQ_FALLBACK_MODELS,
     openai: openaiModels.length > 0 ? openaiModels : OPENAI_FALLBACK_MODELS,
