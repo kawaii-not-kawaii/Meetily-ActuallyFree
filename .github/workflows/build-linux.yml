@@ -129,8 +129,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.97.1
+        # Keep in sync with rust-toolchain.toml (Rust >= 1.100 breaks ort-sys rc.10 and tauri-build 2.6).
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: x86_64-unknown-linux-gnu
 

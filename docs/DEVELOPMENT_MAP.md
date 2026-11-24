@@ -290,6 +290,12 @@ changing the signed executable payloads.
 
 ## 6. Tests, qualification, and historical notes
 
+The Rust toolchain is pinned to 1.97.1 by `rust-toolchain.toml`; rustup uses it for
+every cargo command in the repo, including local release scripts, and the build
+workflows pin the same version. Rust >= 1.100 changes the build-script `OUT_DIR`
+depth, which ort-sys 2.0.0-rc.10 and tauri-build 2.6 do not handle; unpin only after
+upgrading to ort >= 2.0.0-rc.14 and tauri-build >= 2.7.
+
 Crash diagnostics are mapped in [ARCHITECTURE.md](../ARCHITECTURE.md#crash-reports).
 `src-tauri/src/diagnostics.rs` persists a bounded native lifecycle timeline for the
 next crash ZIP; `crash_report.rs` owns session recovery and export. Run native

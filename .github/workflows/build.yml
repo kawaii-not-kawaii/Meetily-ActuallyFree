@@ -101,8 +101,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: install Rust 1.97.1
+        # Keep in sync with rust-toolchain.toml (Rust >= 1.100 breaks ort-sys rc.10 and tauri-build 2.6).
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           # Only aarch64-apple-darwin for Apple Silicon (no Intel support)
           targets: ${{ contains(inputs.platform, 'macos') && 'aarch64-apple-darwin' || '' }}
