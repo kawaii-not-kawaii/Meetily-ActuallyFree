@@ -151,6 +151,26 @@ $env:CMAKE_GENERATOR = "Ninja"
 $ninja = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
 $env:PATH = "C:\Program Files\CMake\bin;$ninja;$env:PATH"
 
+# whisper.cpp/ggml defaults to GGML_NATIVE=ON, which specializes Whisper for
+# the build machine's CPU (AVX-512 on many desktops) and can crash users' CPUs
+# with an illegal instruction. whisper-rs-sys forwards CMAKE_* variables, so
+# this hook forces a portable ggml build in every variant; RUSTFLAGS keeps the
+# Rust code on the same x86-64-v2 baseline (upstream 41daaa5). Both stay set
+# through the final Tauri bundle: it relinks the CPU target, and a different
+# RUSTFLAGS there would rebuild the whole crate graph.
+$env:CMAKE_PROJECT_INCLUDE = (Join-Path $repo ".github\force-portable-ggml.cmake").Replace('\', '/')
+$env:RUSTFLAGS = "-C target-cpu=x86-64-v2"
+$verifyPortableGgml = Join-Path $repo ".github\verify-portable-ggml.cjs"
+function Assert-PortableWhisper([string]$ProfileDirectory) {
+  & node $verifyPortableGgml $ProfileDirectory
+  if ($LASTEXITCODE -ne 0) {
+    # The verifier checks every whisper-rs-sys CMake cache in the target, so a
+    # stale cache from a pre-portable build also fails here; delete
+    # <profile>\build\whisper-rs-sys-* and rebuild in that case.
+    throw "Whisper build is not CPU-portable: $ProfileDirectory"
+  }
+}
+
 if (-not $SkipFrontend) {
   Push-Location $frontend
   try {
@@ -187,6 +207,7 @@ function Build-Variant([string]$Name, [string]$TargetDir, [string[]]$Features) {
   } finally { Pop-Location }
   $binary = Join-Path $TargetDir "release\meetily.exe"
   if (-not (Test-Path $binary)) { throw "$Name binary missing: $binary" }
+  Assert-PortableWhisper (Join-Path $TargetDir "release")
   # Tauri's packaging pass can relink the CPU placeholder with a different
   # context. Retain each EXE/PDB pair before that pass overwrites its symbols.
   $pdb = Join-Path $TargetDir "release\meetily.pdb"
@@ -264,6 +285,9 @@ try {
 } finally {
   Pop-Location
 }
+# The bundle pass compiles the CPU target itself (and is the only compile in
+# -PackageOnly runs), so re-check it before anything is copied to dist.
+Assert-PortableWhisper (Join-Path $cpuTarget "release")
 } finally {
   Remove-Item $universalMarker -Force -ErrorAction SilentlyContinue
 }

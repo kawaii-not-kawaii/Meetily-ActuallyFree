@@ -270,6 +270,18 @@ The universal Windows build script is
 `frontend/scripts/build-universal-windows.ps1`. It packages CPU/Vulkan/CUDA app
 variants; the runtime payload must match the one validated in tests. Validate with
 `node frontend/scripts/verify-windows-release.mjs`.
+Every variant is built CPU-portable: the script sets `CMAKE_PROJECT_INCLUDE` to
+`.github/force-portable-ggml.cmake` (forces `GGML_NATIVE=OFF`; whisper-rs-sys
+forwards `CMAKE_*`) and `RUSTFLAGS=-C target-cpu=x86-64-v2`, then runs
+`.github/verify-portable-ggml.cjs` on each variant's `release` directory and again
+after the Tauri bundle. The verifier fails unless every whisper-rs-sys
+`CMakeCache.txt` has `GGML_NATIVE` and the AVX-512 flags explicitly `OFF`; a stale
+cache from an older native build also fails it (delete
+`release\build\whisper-rs-sys-*`). Unit tests: `node --test
+.github/verify-portable-ggml.test.cjs` (also in `pr-checks.yml`). The verifier relies
+on the pre-Rust-1.100 `target/<profile>/build/<pkg>-<hash>/out` layout, which the
+pinned toolchain in `rust-toolchain.toml` keeps. llama-helper's own ggml build is
+not covered by this hook.
 The packager reads release notes with .NET `ReadAllText` so Windows PowerShell
 does not attach provider/filesystem metadata to updater `notes`. The payload
 verifier requires `notes` to be a string. This was caught during v0.2.18 draft
