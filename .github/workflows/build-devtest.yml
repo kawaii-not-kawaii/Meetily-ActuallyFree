@@ -421,22 +421,6 @@ jobs:
           cargo build $profileFlag -p meetily --bin meetily --no-default-features --features vulkan,custom-protocol
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          # build-nsis-progress-plugin.ps1 bootstraps NSIS from
-          # NSIS-Dev/nsis v3.11, a release that no longer exists (404), so the
-          # runner never has NSIS when the script runs. Install the exact
-          # archive Tauri's own bundler downloads (same layout, nsis-3.11/ top
-          # folder) into %LOCALAPPDATA%\tauri\NSIS first; the script's
-          # bootstrap is skipped when that path exists and the Tauri step
-          # reuses the same install.
-          $nsis = Join-Path $env:LOCALAPPDATA "tauri\NSIS"
-          if (-not (Test-Path -LiteralPath $nsis)) {
-            $archive = Join-Path $env:RUNNER_TEMP "nsis-3.11.zip"
-            Invoke-WebRequest -Uri "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip" -OutFile $archive
-            Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP -Force
-            New-Item -ItemType Directory -Force -Path (Split-Path $nsis -Parent) | Out-Null
-            Move-Item (Join-Path $env:RUNNER_TEMP "nsis-3.11") -Destination $nsis
-          }
-
           & "frontend/scripts/build-nsis-progress-plugin.ps1" -ProgressMainBinary "target/$profile/meetily.exe"
 
       # Build step (with code signing)
