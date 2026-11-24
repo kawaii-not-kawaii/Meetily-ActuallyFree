@@ -90,4 +90,4 @@ frontend/src-tauri/nsis-progress/*.dll
 frontend/src-tauri/nsis-progress/*.obj
 frontend/MeetilyProgress.obj
 
-CLAUDE.md
+/CLAUDE.local.md
