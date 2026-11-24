@@ -67,7 +67,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 11.9.0
           run_install: false
 
       - name: Setup Node
@@ -88,15 +88,38 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.97.1
+        # Keep in sync with rust-toolchain.toml (Rust >= 1.100 breaks ort-sys rc.10 and tauri-build 2.6).
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: ${{ matrix.target }}
+
+      - name: Configure portable Windows native build
+        id: windows-portability
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
+          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $buildDirectory = "target/x86_64-pc-windows-msvc/release"
+          $configPath = (Join-Path $env:RUNNER_TEMP "tauri.windows-portable.conf.json").Replace('\', '/')
+          @{
+            build = @{
+              beforeBundleCommand = @{
+                script = "node .github/verify-portable-ggml.cjs $buildDirectory"
+                cwd = $env:GITHUB_WORKSPACE
+              }
+            }
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path $configPath -Encoding utf8
+          "args=--config `"$configPath`"" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          prefix-key: ${{ runner.os == 'Windows' && 'windows-portable-v1' || 'v0-rust' }}
           key: ${{ matrix.platform }}-${{ matrix.target }}
 
       # Platform-specific dependencies
@@ -147,7 +170,7 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd frontend
-          pnpm install
+          pnpm install --frozen-lockfile
 
       # macOS signing setup
       - name: Import Apple Developer Certificate
@@ -354,7 +377,8 @@ jobs:
           fi
 
           # Build llama-helper from workspace root
-          cargo build --release -p llama-helper $LLAMA_FEATURES
+          # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+          CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release -p llama-helper $LLAMA_FEATURES
 
           # Determine binary extension
           EXT=""
@@ -403,7 +427,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         with:
           projectPath: frontend
-          args: ${{ matrix.args }} ${{ steps.build-features.outputs.features }}
+          args: ${{ matrix.args }} ${{ steps.build-features.outputs.features }} ${{ steps.windows-portability.outputs.args }}
 
       # Build step (without code signing - updater signing only)
       - name: Build Tauri app (unsigned)
@@ -421,7 +445,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         with:
           projectPath: frontend
-          args: ${{ matrix.args }} ${{ steps.build-features.outputs.features }}
+          args: ${{ matrix.args }} ${{ steps.build-features.outputs.features }} ${{ steps.windows-portability.outputs.args }}
 
       # Linux post-build processing
       - name: Remove libwayland-client.so from AppImage

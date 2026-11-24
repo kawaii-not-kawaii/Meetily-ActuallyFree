@@ -197,7 +197,7 @@ Recordings, the meeting database, and downloaded models are stored locally.
 Local inference can run without sending meeting content to a cloud model;
 choosing a cloud provider or Claude CLI changes where that provider processes
 the content. Model downloads and optional update checks require network access.
-Analytics transmission is disabled, and Windows update checks are opt-in.
+The app contains no analytics client, and Windows update checks are opt-in.
 
 <details>
 <summary><strong>Storage locations and saved audio files</strong></summary>

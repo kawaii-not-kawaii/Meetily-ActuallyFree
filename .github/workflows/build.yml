@@ -80,7 +80,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 11.9.0
           run_install: false
 
       - name: Setup Node
@@ -101,16 +101,45 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: install Rust 1.97.1
+        # Keep in sync with rust-toolchain.toml (Rust >= 1.100 breaks ort-sys rc.10 and tauri-build 2.6).
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           # Only aarch64-apple-darwin for Apple Silicon (no Intel support)
           targets: ${{ contains(inputs.platform, 'macos') && 'aarch64-apple-darwin' || '' }}
+
+      - name: Configure portable Windows native build
+        id: windows-portability
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PORTABLE_BUILD_ARGS: ${{ inputs.build-args }}
+          PORTABLE_BUILD_PROFILE: ${{ steps.build-profile.outputs.profile }}
+        run: |
+          $cmakeHook = (Join-Path $env:GITHUB_WORKSPACE ".github/force-portable-ggml.cmake").Replace('\', '/')
+          "CMAKE_PROJECT_INCLUDE=$cmakeHook" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUSTFLAGS=-C target-cpu=x86-64-v2" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          $buildDirectory = "target/$env:PORTABLE_BUILD_PROFILE"
+          if ($env:PORTABLE_BUILD_ARGS -match '(?:^|\s)--target(?:=|\s+)([A-Za-z0-9_-]+)') {
+            $buildDirectory = "target/$($Matches[1])/$env:PORTABLE_BUILD_PROFILE"
+          }
+          $configPath = (Join-Path $env:RUNNER_TEMP "tauri.windows-portable.conf.json").Replace('\', '/')
+          @{
+            build = @{
+              beforeBundleCommand = @{
+                script = "node .github/verify-portable-ggml.cjs $buildDirectory"
+                cwd = $env:GITHUB_WORKSPACE
+              }
+            }
+          } | ConvertTo-Json -Depth 4 | Set-Content -Path $configPath -Encoding utf8
+          "args=--config `"$configPath`"" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          prefix-key: ${{ runner.os == 'Windows' && 'windows-portable-v1' || 'v0-rust' }}
           key: ${{ inputs.platform }}-${{ inputs.target }}-vulkan-v2
 
       - name: install dependencies (ubuntu 24.04)
@@ -380,7 +409,7 @@ jobs:
           # Check environment variables
           Write-Host "Environment Variables:"
           Write-Host "  SM_HOST: $env:SM_HOST"
-          Write-Host "  SM_API_KEY: $($env:SM_API_KEY.Substring(0, [Math]::Min(20, $env:SM_API_KEY.Length)))..."
+          Write-Host "  SM_API_KEY: $(if ($env:SM_API_KEY) { '***SET***' } else { 'NOT SET' })"
           Write-Host "  SM_CLIENT_CERT_FILE: $env:SM_CLIENT_CERT_FILE"
           Write-Host "  SM_CLIENT_CERT_PASSWORD: $(if ($env:SM_CLIENT_CERT_PASSWORD) { '***SET***' } else { 'NOT SET' })"
           Write-Host ""
@@ -431,7 +460,7 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd frontend
-          pnpm install
+          pnpm install --frozen-lockfile
 
       - name: rustup install target
         if: ${{ inputs.target != '' && !contains(inputs.target, 'unknown-linux-gnu') && !contains(inputs.target, 'pc-windows-msvc') }}
@@ -515,6 +544,8 @@ jobs:
           # llama-helper is for LLM inference and works fine on CPU
           Write-Host "Building llama-helper sidecar (CPU-only)..."
 
+          # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+          $env:CMAKE_DISABLE_FIND_PACKAGE_OpenSSL = "TRUE"
           cargo build --release -p llama-helper
 
           if ($LASTEXITCODE -ne 0) {
@@ -555,7 +586,8 @@ jobs:
           fi
 
           # Build llama-helper from workspace root
-          cargo build --release -p llama-helper $LLAMA_FEATURES
+          # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+          CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release -p llama-helper $LLAMA_FEATURES
 
           # Determine target triple and binary extension
           TARGET="${{ inputs.target }}"
@@ -601,7 +633,7 @@ jobs:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
+          args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }} ${{ steps.windows-portability.outputs.args }}
 
       - name: Upload artifacts (macOS)
         if: inputs.upload-artifacts && contains(inputs.platform, 'macos')

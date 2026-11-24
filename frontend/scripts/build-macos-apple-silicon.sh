@@ -20,7 +20,8 @@ rustup target add "$TARGET"
 echo "Building the Apple Silicon llama-helper sidecar..."
 (
     cd "$REPO_DIR"
-    cargo build --release --package llama-helper --target "$TARGET" --features metal
+    # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+    CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release --package llama-helper --target "$TARGET" --features metal
 )
 
 mkdir -p "$FRONTEND_DIR/src-tauri/binaries"

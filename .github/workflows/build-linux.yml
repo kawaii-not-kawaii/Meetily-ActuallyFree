@@ -108,7 +108,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 8
+          version: 11.9.0
           run_install: false
 
       - name: Setup Node
@@ -129,8 +129,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.97.1
+        # Keep in sync with rust-toolchain.toml (Rust >= 1.100 breaks ort-sys rc.10 and tauri-build 2.6).
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: x86_64-unknown-linux-gnu
 
@@ -184,12 +185,13 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd frontend
-          pnpm install
+          pnpm install --frozen-lockfile
 
       - name: Build llama-helper sidecar
         run: |
           echo "Building llama-helper sidecar (CPU mode)..."
-          cargo build --release -p llama-helper
+          # llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+          CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE cargo build --release -p llama-helper
           
           # Copy binary to binaries directory
           mkdir -p frontend/src-tauri/binaries

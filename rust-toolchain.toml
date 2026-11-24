@@ -1,0 +1,10 @@
+# Pinned because Rust 1.100 stabilized cargo's new build-dir layout, which nests
+# build-script OUT_DIR one level deeper. ort-sys 2.0.0-rc.10 and tauri-build
+# 2.6.x locate the target dir by a fixed number of parents and break on it
+# (upstream Zackriya-Solutions/meetily 21de5b5), and
+# .github/verify-portable-ggml.cjs reads the old target/<profile>/build layout.
+# 1.97.1 is the toolchain our macOS release workflow already used. Unpin after
+# upgrading to ort >= 2.0.0-rc.14 and tauri-build >= 2.7.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"

@@ -31,6 +31,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Test the portable Whisper (GGML) build verifier
+        run: node --test ../.github/verify-portable-ggml.test.cjs
       - name: Run frontend tests in isolated processes
         run: pnpm dlx bun@1.3.10 scripts/test-isolated.mjs
       - run: pnpm run build

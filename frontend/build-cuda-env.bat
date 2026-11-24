@@ -53,8 +53,11 @@ exit /b 1
 :helper
 echo [helper] building llama-helper (CPU) release
 cd /d "%REPO%\llama-helper"
+REM llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
+set "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE"
 cargo build --release
 if errorlevel 1 ( echo [helper] build FAILED & exit /b 1 )
+set "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL="
 if not exist "%ROOT%src-tauri\binaries" mkdir "%ROOT%src-tauri\binaries"
 copy /Y "%REPO%\target\release\llama-helper.exe" "%ROOT%src-tauri\binaries\llama-helper-x86_64-pc-windows-msvc.exe" >nul
 if errorlevel 1 ( echo [helper] copy FAILED & exit /b 1 )
