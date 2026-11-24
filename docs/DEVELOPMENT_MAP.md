@@ -309,6 +309,11 @@ workflows pin the same version. Rust >= 1.100 changes the build-script `OUT_DIR`
 depth, which ort-sys 2.0.0-rc.10 and tauri-build 2.6 do not handle; unpin only after
 upgrading to ort >= 2.0.0-rc.14 and tauri-build >= 2.7.
 
+With whisper-rs 0.16, building with `--features openblas` requires the
+`BLAS_INCLUDE_DIRS` environment variable to point at the OpenBLAS headers; the
+repository cargo config (`frontend/src-tauri/.cargo/config.toml`) sets the Ubuntu
+x86_64 path, and other systems must set their own before building.
+
 Crash diagnostics are mapped in [ARCHITECTURE.md](../ARCHITECTURE.md#crash-reports).
 `src-tauri/src/diagnostics.rs` persists a bounded native lifecycle timeline for the
 next crash ZIP; `crash_report.rs` owns session recovery and export. Run native
