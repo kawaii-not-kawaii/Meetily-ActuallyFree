@@ -85,3 +85,20 @@ SHA or PR.
   returned exactly the v2 sizes in `download_file_sizes` (encoder 652184014,
   decoder_joint 8998286, nemo128 139764, vocab 9384) and a Range request returned
   206. No User-Agent was added.
+- Every remaining Hugging Face model download is now pinned to a revision as
+  well (no `resolve/main` remains in app code). Each revision is the repo's HF API
+  `sha` on 2026-11-24. At that revision, HEAD returned the sizes below and a Range
+  request returned 206. No User-Agent was added.
+
+  | Download | Repo | Revision | Size check |
+  | --- | --- | --- | --- |
+  | Summary `qwen3.5:2b` | `unsloth/Qwen3.5-2B-GGUF` | `f6d5376be1edb4d416d56da11e5397a961aca8ae` | 1280835840 = `size_bytes` |
+  | Summary `qwen3.5:4b` | `unsloth/Qwen3.5-4B-GGUF` | `e87f176479d0855a907a41277aca2f8ee7a09523` | 2740937888 = `size_bytes` |
+  | Summary `gemma3:4b` | `bartowski/google_gemma-3-4b-it-GGUF` | `71506238f970075ca85125cd749c28b1b0eee84e` | 2489758112 = `size_bytes` |
+  | Summary `gemma3:1b` | `bartowski/google_gemma-3-1b-it-GGUF` | `116f76234503685a98f572982177b11d44ec8ff1` | 1069306624 = `size_bytes` |
+  | All 12 Whisper catalog models | `ggerganov/whisper.cpp` | `5359861c739e955e79d9a303bcbc70fb988958b1` | each byte-identical in size to `main`, above the catalog's 90% minimum |
+
+  Whisper URLs are now derived from `WHISPER_MODEL_CATALOG` filenames, so the
+  catalog and the downloadable set cannot drift apart. Tests:
+  `every_catalog_model_downloads_from_the_pinned_revision` (whisper_engine) and
+  `every_model_download_is_pinned_to_a_hugging_face_revision` (summary models).
