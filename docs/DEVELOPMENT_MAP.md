@@ -429,6 +429,7 @@ or with standalone TypeScript checking. When using pnpm in this environment,
 | [V0218_DOWNLOAD_FIX.md](V0218_DOWNLOAD_FIX.md) | Async stack-overflow diagnosis; keep large checksum buffers off the future's inline stack. |
 | [NEMOTRON_NATIVE_ACTIVATION.md](NEMOTRON_NATIVE_ACTIVATION.md) | Native download/activation lifetime regression and verification. |
 | [UPSTREAM_0_4_1_PORTS.md](UPSTREAM_0_4_1_PORTS.md) | Selective upstream integration decisions. |
+| [UPSTREAM_BATCH2_CORRECTNESS_PORTS.md](UPSTREAM_BATCH2_CORRECTNESS_PORTS.md) | Post-0.4.1 upstream correctness ports (Parakeet lifecycle, Whisper downloads, VAD flush, reasoning cleaner, log scrubbing) and their adaptations. |
 
 The public release documented in README is distinct from a local candidate.
 Development labels 0.2.18–0.2.20 in historical notes were consolidated into the
