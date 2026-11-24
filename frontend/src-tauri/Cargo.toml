@@ -207,7 +207,8 @@ whisper-rs = { version = "0.16.0", features = ["raw-api", "metal", "coreml"] }
 # Users can enable features manually:
 #   --features cuda     (NVIDIA GPUs)
 #   --features vulkan   (AMD/Intel GPUs)
-#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS)
+#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS; since whisper-rs 0.16
+#                       the build stops without it, and the repo cargo config sets the Ubuntu x86_64 path)
 [target.'cfg(target_os = "windows")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 ort = { version = "2.0.0-rc.10", features = ["load-dynamic"] }
@@ -220,7 +221,8 @@ futures-channel = "0.3.31"
 #   --features cuda     (NVIDIA GPUs)
 #   --features vulkan   (AMD/Intel GPUs)
 #   --features hipblas  (AMD ROCm)
-#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS)
+#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS; since whisper-rs 0.16
+#                       the build stops without it, and the repo cargo config sets the Ubuntu x86_64 path)
 [target.'cfg(target_os = "linux")'.dependencies]
 whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 futures-channel = "0.3.31"
