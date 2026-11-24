@@ -401,6 +401,17 @@ jobs:
           echo "Copied llama-helper to frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}${EXT}"
           ls -la frontend/src-tauri/binaries/
 
+      # The NSIS plugin step below runs `cargo build -p meetily`, whose
+      # tauri::generate_context! requires frontendDist (../out) to exist, so
+      # produce the Next.js export first. build-universal-windows.ps1 does the
+      # same before building the plugin. The Tauri step rebuilds the frontend
+      # via beforeBuildCommand; that second build is acceptable.
+      - name: Build frontend for NSIS plugin build
+        if: contains(matrix.platform, 'windows')
+        run: |
+          cd frontend
+          pnpm run build
+
       - name: Build Windows NSIS overall-progress plugin
         if: contains(matrix.platform, 'windows')
         shell: pwsh
