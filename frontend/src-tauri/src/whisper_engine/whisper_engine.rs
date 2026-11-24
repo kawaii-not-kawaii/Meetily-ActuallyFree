@@ -1178,8 +1178,9 @@ impl WhisperEngine {
             }
         }
 
+        // No User-Agent: Hugging Face serves these files without one, and an
+        // app/version UA would only identify Meetily installs to the host.
         let client = Client::builder()
-            .user_agent(concat!("Meetily/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| anyhow!("Failed to create download client: {}", e))?;
         let response = tokio::select! {
@@ -1680,7 +1681,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn downloaded_model_sends_user_agent_and_rejects_undersized_valid_header() {
+    async fn downloaded_model_sends_no_app_user_agent_and_rejects_undersized_valid_header() {
         let dir = tempfile::tempdir().unwrap();
         let engine = WhisperEngine::new_with_models_dir(Some(dir.path().to_path_buf())).unwrap();
         engine.discover_models().await.unwrap();
@@ -1691,10 +1692,7 @@ mod tests {
         server.await.unwrap();
 
         assert!(error.to_string().contains("too small"));
-        assert!(request.to_ascii_lowercase().contains(&format!(
-            "user-agent: meetily/{}",
-            env!("CARGO_PKG_VERSION")
-        )));
+        assert!(!request.to_ascii_lowercase().contains("user-agent: meetily"));
         assert!(!engine.active_downloads.lock().await.contains_key("tiny"));
         assert!(!dir.path().join("ggml-tiny.bin").exists());
         assert!(matches!(
