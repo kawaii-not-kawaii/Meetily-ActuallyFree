@@ -5,7 +5,7 @@ use regex::Regex;
 use reqwest::Client;
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Only the template's leading H1 is a title candidate. A heading in the body,
 /// or an unfilled template instruction, must never rename a meeting.
@@ -35,10 +35,64 @@ mod generated_title_tests {
     }
 }
 
-// Compile regex once and reuse (significant performance improvement for repeated calls)
-static THINKING_TAG_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?s)<think(?:ing)?>.*?</think(?:ing)?>").unwrap()
+// Reasoning envelopes (`<think>`/`<thinking>`, any case, optional attributes)
+// and any leftover marker. Ported from upstream #744 (e1a7155/afcfeb5).
+// `<thinker>` and similar literal tags are deliberately not matched.
+static THINK_ENVELOPE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)<think(?:ing)?(?:\s+[^>]*)?>.*?</think(?:ing)?\s*>").unwrap()
 });
+static THINK_MARKER_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?is)</?think(?:ing)?(?:\s+[^>]*)?>").unwrap());
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanedLlmMarkdown {
+    pub markdown: String,
+    pub reasoning_stripped: bool,
+}
+
+/// Strip reasoning and an outer Markdown fence from LLM output.
+///
+/// Besides closed envelopes, this removes a *leading* orphan close marker and
+/// everything before it: some reasoning models (e.g. qwen3 chat templates)
+/// open the envelope implicitly in the prompt, so the reply starts with
+/// reasoning and only shows `</think>`. Any other unpaired marker is left in
+/// place for `require_meaningful_summary` to reject, so partial reasoning is
+/// never saved as a summary.
+pub fn clean_llm_markdown_detailed(raw: &str) -> CleanedLlmMarkdown {
+    let mut visible = THINK_ENVELOPE_REGEX.replace_all(raw, "").into_owned();
+    if let Some(marker) = THINK_MARKER_REGEX.find(&visible) {
+        if marker.as_str().starts_with("</") {
+            visible = visible[marker.end()..].to_string();
+        }
+    }
+    let reasoning_stripped = visible != raw;
+    let trimmed = visible.trim();
+    const PREFIXES: &[&str] = &["```markdown\n", "```\n", "```markdown\r\n", "```\r\n"];
+    const SUFFIX: &str = "```";
+    let markdown = PREFIXES
+        .iter()
+        .find_map(|prefix| {
+            (trimmed.len() >= prefix.len() + SUFFIX.len()
+                && trimmed.starts_with(prefix)
+                && trimmed.ends_with(SUFFIX))
+            .then(|| trimmed[prefix.len()..trimmed.len() - SUFFIX.len()].trim())
+        })
+        .unwrap_or(trimmed)
+        .to_string();
+
+    if THINK_MARKER_REGEX.is_match(&markdown) {
+        warn!(
+            raw_len = raw.len(),
+            sanitized_len = markdown.len(),
+            "LLM output contains an unterminated reasoning marker"
+        );
+    }
+
+    CleanedLlmMarkdown {
+        markdown,
+        reasoning_stripped,
+    }
+}
 
 const ENGLISH_BASE_SUMMARY_INSTRUCTION: &str =
     "**Write the summary/report in English regardless of transcript language; non-English prose is invalid.**";
@@ -289,30 +343,15 @@ pub fn chunk_text(text: &str, chunk_size_tokens: usize, overlap_tokens: usize) -
 /// # Returns
 /// Cleaned markdown string
 pub fn clean_llm_markdown_output(markdown: &str) -> String {
-    // Remove <think>...</think> or <thinking>...</thinking> blocks using cached regex
-    let without_thinking = THINKING_TAG_REGEX.replace_all(markdown, "");
-
-    let trimmed = without_thinking.trim();
-
-    // List of possible language identifiers for code blocks
-    const PREFIXES: &[&str] = &["```markdown\n", "```\n"];
-    const SUFFIX: &str = "```";
-
-    for prefix in PREFIXES {
-        if trimmed.starts_with(prefix) && trimmed.ends_with(SUFFIX) {
-            // Extract content between the fences
-            let content = &trimmed[prefix.len()..trimmed.len() - SUFFIX.len()];
-            return content.trim().to_string();
-        }
-    }
-
-    // If no fences found, return the trimmed string
-    trimmed.to_string()
+    clean_llm_markdown_detailed(markdown).markdown
 }
 
 fn require_meaningful_summary(markdown: &str, stage: &str) -> Result<String, String> {
-    let cleaned = clean_llm_markdown_output(markdown);
-    let has_content = cleaned.lines().any(|line| {
+    let cleaned = clean_llm_markdown_detailed(markdown);
+    if THINK_MARKER_REGEX.is_match(&cleaned.markdown) {
+        return Err(format!("{stage} contained an unterminated reasoning marker"));
+    }
+    let has_content = cleaned.markdown.lines().any(|line| {
         let line = line.trim();
         !line.starts_with('#')
             && !line.starts_with("```")
@@ -320,7 +359,11 @@ fn require_meaningful_summary(markdown: &str, stage: &str) -> Result<String, Str
     });
 
     if has_content {
-        Ok(cleaned)
+        Ok(cleaned.markdown)
+    } else if cleaned.reasoning_stripped {
+        Err(format!(
+            "{stage} returned no visible summary content after reasoning removal"
+        ))
     } else {
         Err(format!("{stage} returned empty content"))
     }
@@ -756,6 +799,87 @@ async fn normalize_markdown_to_english(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleaner_removes_closed_reasoning_envelopes_everywhere() {
+        let cleaned = clean_llm_markdown_detailed(
+            "Intro\n<think>private</think>\n# Meeting\nHello\n<thinking>also private</thinking>\nTail",
+        );
+        assert!(cleaned.reasoning_stripped);
+        assert!(!cleaned.markdown.contains("<think"));
+        assert!(!cleaned.markdown.contains("private"));
+        assert!(cleaned.markdown.contains("Intro"));
+        assert!(cleaned.markdown.contains("# Meeting"));
+        assert!(cleaned.markdown.contains("Tail"));
+
+        let fenced = clean_llm_markdown_detailed("```\n<think>private</think>\nvisible\n```");
+        assert_eq!(fenced.markdown, "visible");
+        assert!(fenced.reasoning_stripped);
+
+        let attributed = clean_llm_markdown_detailed(
+            "Visible\n<thinking class=\"internal\">private</thinking>\nTail",
+        );
+        assert!(attributed.reasoning_stripped);
+        assert!(!attributed.markdown.contains("private"));
+        assert!(attributed.markdown.contains("Visible"));
+        assert!(attributed.markdown.contains("Tail"));
+
+        let upper = clean_llm_markdown_detailed("<THINK>private</Think >\n# Notes\nBody");
+        assert_eq!(upper.markdown, "# Notes\nBody");
+
+        let literal = clean_llm_markdown_detailed("<thinker>Visible</thinker>");
+        assert!(!literal.reasoning_stripped);
+        assert_eq!(literal.markdown, "<thinker>Visible</thinker>");
+    }
+
+    #[test]
+    fn cleaner_drops_reasoning_before_a_leading_orphan_close_marker() {
+        // Implicitly opened envelope: reply starts with reasoning, then `</think>`.
+        let cleaned =
+            clean_llm_markdown_detailed("Let me think about this...\n</think>\n\n# Notes\nBody");
+        assert!(cleaned.reasoning_stripped);
+        assert_eq!(cleaned.markdown, "# Notes\nBody");
+        assert_eq!(
+            require_meaningful_summary("reasoning only\n</thinking>", "Final summary"),
+            Err("Final summary returned no visible summary content after reasoning removal".to_string())
+        );
+    }
+
+    #[test]
+    fn cleaner_rejects_unterminated_reasoning_markers() {
+        for raw in [
+            "Visible\n<think>private",
+            "Visible\n<think class=\"internal\">private",
+            "# Notes\nBody\n</think>\nmore</think>",
+        ] {
+            assert_eq!(
+                require_meaningful_summary(raw, "Final summary"),
+                Err("Final summary contained an unterminated reasoning marker".to_string()),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn reasoning_only_and_empty_fences_fail_visible_content_guard() {
+        assert_eq!(
+            require_meaningful_summary("<think>private</think>", "Final summary"),
+            Err("Final summary returned no visible summary content after reasoning removal".to_string())
+        );
+        for raw in ["```\n```", "```markdown\n```", "```\r\n```", "```markdown\r\n```"] {
+            assert!(require_meaningful_summary(raw, "Translation").is_err(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn cleaner_strips_outer_crlf_fence_without_normalizing_inner_markdown() {
+        let markdown = "# Heading\r\n\r\n```rust\r\nlet x = 1;\r\n```";
+        let wrapped = format!("```\r\n{markdown}\r\n```");
+        let cleaned = clean_llm_markdown_detailed(&wrapped);
+        assert_eq!(cleaned.markdown, markdown);
+        assert!(!cleaned.reasoning_stripped);
+        assert_eq!(clean_llm_markdown_detailed(markdown).markdown, markdown);
+    }
 
     #[test]
     fn chunk_text_preserves_content_after_early_sentence_boundary() {
