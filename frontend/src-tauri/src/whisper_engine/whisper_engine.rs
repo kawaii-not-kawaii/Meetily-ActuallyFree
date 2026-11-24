@@ -1320,6 +1320,22 @@ mod tests {
     use tokio::sync::oneshot;
     use tokio::time::{timeout, Duration};
 
+    /// Consume one HTTP request head (through the blank line) from a mock
+    /// server socket. A single `read` may return a partial head, which would let
+    /// the server respond before the client finished sending.
+    async fn read_http_request_head(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !request.ends_with(b"\r\n\r\n") {
+            let bytes_read = socket.read(&mut buffer).await.unwrap();
+            if bytes_read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..bytes_read]);
+        }
+        request
+    }
+
     #[test]
     fn every_catalog_model_downloads_from_the_pinned_revision() {
         assert_eq!(WHISPER_MODEL_CATALOG.len(), 12);
@@ -1644,8 +1660,7 @@ mod tests {
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0_u8; 1024];
-            socket.read(&mut request).await.unwrap();
+            let _ = read_http_request_head(&mut socket).await;
             socket
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
@@ -1841,8 +1856,7 @@ mod tests {
 
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = [0_u8; 1024];
-            socket.read(&mut request).await.unwrap();
+            let _ = read_http_request_head(&mut socket).await;
             socket
                 .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n")
                 .await

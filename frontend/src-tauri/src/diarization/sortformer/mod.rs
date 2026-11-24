@@ -109,7 +109,9 @@ impl DiarizationConfig {
     /// * `offset` - Probability threshold to end a segment (0.0-1.0, typical: 0.4-0.6)
     ///
     /// # Example
-    /// ```rust
+    /// Not compiled: this example is vendored from `parakeet_rs`, which is not a
+    /// dependency of this crate (the type lives at `crate::diarization::sortformer`).
+    /// ```ignore
     /// use parakeet_rs::sortformer::DiarizationConfig;
     ///
     /// // More sensitive detection (lower thresholds)

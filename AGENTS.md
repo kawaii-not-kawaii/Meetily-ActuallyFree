@@ -40,6 +40,22 @@ Native tests: `cargo test -p meetily --lib <filter>` with the platform's native
 prerequisites and feature flags (see DEVELOPMENT_MAP §6). CI: `.github/workflows/`
 (`pr-checks.yml` runs the frontend tests, build, and typecheck).
 
+### Native build on Linux without system -dev packages
+
+`. scripts/linux-sysroot-env.sh` points pkg-config, clang/bindgen, and the linker
+at a read-only user-space sysroot (`$MEETILY_SYSROOT`, default
+`~/.local/meetily-sysroot`, extracted .debs under `root/`). It also stages the two
+gitignored inputs the Tauri build needs: a placeholder
+`frontend/src-tauri/binaries/llama-helper-x86_64-unknown-linux-gnu` (build the real
+one with `cargo build -p llama-helper` to run the app) and a stub
+`frontend/out/index.html`. Then, with your own `CARGO_TARGET_DIR` (keep it off a
+small tmpfs; a full debug tree is several GB):
+
+```sh
+cargo test --workspace            # includes doctests; must pass on main
+cargo clippy --workspace --all-targets   # must have zero errors; warnings are tracked, not gating
+```
+
 ## Working conventions
 
 - Inspect the current diff before editing; preserve unrelated local work.

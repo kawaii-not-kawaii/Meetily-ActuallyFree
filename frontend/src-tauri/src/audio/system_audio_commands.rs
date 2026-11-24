@@ -120,7 +120,8 @@ mod tests {
         match devices {
             Ok(device_list) => {
                 println!("System audio devices: {:?}", device_list);
-                assert!(device_list.len() >= 0); // Should at least not crash
+                // Device count is machine-dependent; only reaching here (no panic) matters.
+                let _ = device_list;
             }
             Err(e) => {
                 println!("Error listing devices: {}", e);
