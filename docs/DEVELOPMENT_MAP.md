@@ -177,6 +177,8 @@ source labels rather than guessing a speaker or switching engines.
 
 Summary-generated title ownership, placeholder rejection and completion refresh
 are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
+Claude summary streaming (SSE, idle timeout, shared HTTP client) is documented in
+[CLAUDE_STREAMING.md](CLAUDE_STREAMING.md).
 
 `diarization/mod.rs` owns persisted engine settings and offline command dispatch.
 Nemotron is Auto-detect only; manual counts belong to Pyannote. Rerunning speaker

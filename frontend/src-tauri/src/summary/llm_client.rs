@@ -5,6 +5,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use super::claude_stream;
+
 const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
 // Generic structure for OpenAI-compatible API chat messages
@@ -86,39 +88,6 @@ pub struct ClaudeRequest {
     pub max_tokens: u32,
     pub system: String,
     pub messages: Vec<ChatMessage>,
-}
-
-// Claude-specific response structure
-#[derive(Deserialize, Debug)]
-pub struct ClaudeChatResponse {
-    pub content: Vec<ClaudeChatContent>,
-    pub stop_reason: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ClaudeChatContent {
-    Text { text: String },
-    #[serde(other)]
-    Other,
-}
-
-impl ClaudeChatResponse {
-    fn complete_text(self) -> Result<String, String> {
-        match self.stop_reason.as_deref() {
-            Some("end_turn" | "stop_sequence") => {},
-            Some("max_tokens") => return Err("Claude reached the output limit before completing the summary. Increase Maximum summary length in Model Settings or request a shorter summary, then retry. The incomplete result was not saved.".into()),
-            Some(reason) => return Err(format!("Claude did not complete the response (stop reason: {reason}). Please retry.")),
-            None => return Err("Claude response did not include a completion reason; incomplete output was not accepted.".into()),
-        }
-        let text = self.content.into_iter().filter_map(|block| match block {
-            ClaudeChatContent::Text { text } => Some(text),
-            ClaudeChatContent::Other => None,
-        }).collect::<Vec<_>>().join("\n");
-        let text = text.trim();
-        if text.is_empty() { return Err("No text in Claude response".into()); }
-        Ok(text.to_string())
-    }
 }
 
 /// LLM Provider enumeration for multi-provider support
@@ -223,6 +192,21 @@ pub async fn generate_summary(
         .map_err(|e| e.to_string());
     }
 
+    // Claude is streamed over SSE with an idle (not total) timeout; see claude_stream.
+    if provider == &LLMProvider::Claude {
+        return generate_claude(
+            client,
+            CLAUDE_MESSAGES_URL,
+            model_name,
+            api_key,
+            system_prompt,
+            user_prompt,
+            max_tokens,
+            cancellation_token,
+        )
+        .await;
+    }
+
     let (api_url, mut headers) = match provider {
         LLMProvider::OpenAI => (
             "https://api.openai.com/v1/chat/completions".to_string(),
@@ -253,22 +237,7 @@ pub async fn generate_summary(
                 header::HeaderMap::new(),
             )
         }
-        LLMProvider::Claude => {
-            let mut header_map = header::HeaderMap::new();
-            header_map.insert(
-                "x-api-key",
-                api_key
-                    .parse()
-                    .map_err(|_| "Invalid API key format".to_string())?,
-            );
-            header_map.insert(
-                "anthropic-version",
-                "2023-06-01"
-                    .parse()
-                    .map_err(|_| "Invalid anthropic version".to_string())?,
-            );
-            ("https://api.anthropic.com/v1/messages".to_string(), header_map)
-        }
+        LLMProvider::Claude => unreachable!("Claude is handled before this match statement"),
         LLMProvider::BuiltInAI => {
             // This case is handled earlier with early returns
             unreachable!("BuiltInAI is handled before this match statement")
@@ -279,15 +248,12 @@ pub async fn generate_summary(
         }
     };
 
-    // Add authorization header for non-Claude providers
-    if provider != &LLMProvider::Claude {
-        headers.insert(
-            header::AUTHORIZATION,
-            format!("Bearer {}", api_key)
-                .parse()
-                .map_err(|_| "Invalid authorization header".to_string())?,
-        );
-    }
+    headers.insert(
+        header::AUTHORIZATION,
+        format!("Bearer {}", api_key)
+            .parse()
+            .map_err(|_| "Invalid authorization header".to_string())?,
+    );
     headers.insert(
         header::CONTENT_TYPE,
         "application/json"
@@ -296,41 +262,22 @@ pub async fn generate_summary(
     );
 
     // Build request body based on provider
-    let request_body = if provider != &LLMProvider::Claude {
-        // For CustomOpenAI, apply optional parameters if provided
-        let (max_tokens_val, temperature_val, top_p_val) = if provider == &LLMProvider::CustomOpenAI {
-            (max_tokens, temperature, top_p)
-        } else {
-            (None, None, None)
-        };
-
-        serde_json::json!(ChatRequest {
-            model: model_name.to_string(),
-            messages: vec![
-                ChatMessage {
-                    role: "system".to_string(),
-                    content: system_prompt.to_string(),
-                },
-                ChatMessage {
-                    role: "user".to_string(),
-                    content: user_prompt.to_string(),
-                }
-            ],
-            max_tokens: max_tokens_val,
-            temperature: temperature_val,
-            top_p: top_p_val,
-        })
+    // For CustomOpenAI, apply optional parameters if provided
+    let (max_tokens_val, temperature_val, top_p_val) = if provider == &LLMProvider::CustomOpenAI {
+        (max_tokens, temperature, top_p)
     } else {
-        serde_json::json!(ClaudeRequest {
-            system: system_prompt.to_string(),
-            model: model_name.to_string(),
-            max_tokens: claude_max_tokens(model_name, max_tokens.map(i64::from))?,
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: user_prompt.to_string(),
-            }]
-        })
+        (None, None, None)
     };
+    let request_body = serde_json::json!(ChatRequest {
+        model: model_name.to_string(),
+        messages: vec![
+            ChatMessage { role: "system".to_string(), content: system_prompt.to_string() },
+            ChatMessage { role: "user".to_string(), content: user_prompt.to_string() },
+        ],
+        max_tokens: max_tokens_val,
+        temperature: temperature_val,
+        top_p: top_p_val,
+    });
 
     info!("🐞 LLM Request to {}: model={}", provider_name(provider), model_name);
 
@@ -348,7 +295,7 @@ pub async fn generate_summary(
             result = request_future => {
                 result.map_err(|e| {
                     if e.is_timeout() {
-                        format!("LLM request timed out after 60 seconds")
+                        format!("LLM request timed out after {} seconds", REQUEST_TIMEOUT_DURATION.as_secs())
                     } else {
                         format!("Failed to send request to LLM: {}", e)
                     }
@@ -361,7 +308,7 @@ pub async fn generate_summary(
     } else {
         request_future.await.map_err(|e| {
             if e.is_timeout() {
-                format!("LLM request timed out after 60 seconds")
+                format!("LLM request timed out after {} seconds", REQUEST_TIMEOUT_DURATION.as_secs())
             } else {
                 format!("Failed to send request to LLM: {}", e)
             }
@@ -376,39 +323,57 @@ pub async fn generate_summary(
         return Err(format!("LLM API request failed: {}", error_body));
     }
 
-    // Parse response based on provider
-    if provider == &LLMProvider::Claude {
-        let body = response.json::<ClaudeChatResponse>();
-        let chat_response = if let Some(token) = cancellation_token {
-            tokio::select! {
-                biased;
-                _ = token.cancelled() => return Err("Summary generation was cancelled".into()),
-                result = body => result,
-            }
-        } else {
-            body.await
-        }.map_err(|e| format!("Failed to parse LLM response: {e}"))?;
+    let chat_response = response
+        .json::<ChatResponse>()
+        .await
+        .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
 
-        info!("🐞 LLM Response received from Claude");
+    info!("🐞 LLM Response received from {}", provider_name(provider));
 
-        chat_response.complete_text()
-    } else {
-        let chat_response = response
-            .json::<ChatResponse>()
-            .await
-            .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
+    let content = chat_response
+        .choices
+        .get(0)
+        .ok_or("No content in LLM response")?
+        .message
+        .content
+        .trim();
+    Ok(content.to_string())
+}
 
-        info!("🐞 LLM Response received from {}", provider_name(provider));
+const CLAUDE_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 
-        let content = chat_response
-            .choices
-            .get(0)
-            .ok_or("No content in LLM response")?
-            .message
-            .content
-            .trim();
-        Ok(content.to_string())
-    }
+/// One streamed Claude request. `url` is a parameter so tests can aim it at a
+/// local fake SSE server.
+pub(crate) async fn generate_claude(
+    client: &Client,
+    url: &str,
+    model_name: &str,
+    api_key: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens: Option<u32>,
+    cancellation_token: Option<&CancellationToken>,
+) -> Result<String, String> {
+    let mut headers = header::HeaderMap::new();
+    headers.insert("x-api-key", api_key.parse().map_err(|_| "Invalid API key format".to_string())?);
+    headers.insert("anthropic-version", header::HeaderValue::from_static("2023-06-01"));
+    headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/json"));
+
+    let body = serde_json::json!(ClaudeRequest {
+        system: system_prompt.to_string(),
+        model: model_name.to_string(),
+        max_tokens: claude_max_tokens(model_name, max_tokens.map(i64::from))?,
+        messages: vec![ChatMessage { role: "user".to_string(), content: user_prompt.to_string() }],
+    });
+
+    info!("🐞 LLM Request to Claude: model={}", model_name);
+    let result = claude_stream::stream_message(
+        client, url, headers, body, claude_stream::CLAUDE_IDLE_TIMEOUT, cancellation_token,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    info!("🐞 LLM Response received from Claude");
+    claude_stream::complete_text(result)
 }
 
 /// Helper function to get provider name for logging
@@ -441,29 +406,6 @@ mod claude_output_tests {
             assert!(claude_max_tokens("claude-sonnet-4-5", Some(value)).is_err());
         }
         assert!(claude_max_tokens("claude-unknown", Some(9000)).is_err());
-    }
-
-    #[test]
-    fn incomplete_claude_responses_never_succeed() {
-        for reason in ["max_tokens", "refusal", "pause_turn", "tool_use", "unknown"] {
-            let response: ClaudeChatResponse = serde_json::from_value(serde_json::json!({
-                "stop_reason": reason, "content": [{"type":"text", "text":"A plausible but incomplete summary"}]
-            })).unwrap();
-            assert!(response.complete_text().is_err(), "accepted {reason}");
-        }
-        let missing: ClaudeChatResponse = serde_json::from_str(r#"{"content":[{"type":"text","text":"partial"}]}"#).unwrap();
-        assert!(missing.complete_text().is_err());
-    }
-
-    #[test]
-    fn preserves_all_text_blocks_without_exposing_thinking() {
-        let response: ClaudeChatResponse = serde_json::from_str(r##"{
-            "stop_reason":"end_turn", "content":[
-                {"type":"thinking", "thinking":"private reasoning", "signature":"example"},
-                {"type":"text", "text":"# Summary\nContent"},
-                {"type":"text", "text":"# Decisions\nApproved"}
-            ]}"##).unwrap();
-        assert_eq!(response.complete_text().unwrap(), "# Summary\nContent\n# Decisions\nApproved");
     }
 
     #[tokio::test]

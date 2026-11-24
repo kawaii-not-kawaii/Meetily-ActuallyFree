@@ -119,7 +119,7 @@ async fn generate_assistant_answer(
     default_temperature: f32,
 ) -> Result<String, String> {
     generate_summary(
-        &reqwest::Client::new(),
+        crate::summary::claude_stream::shared_http_client(),
         &model.provider,
         &model.model_name,
         &model.api_key,
