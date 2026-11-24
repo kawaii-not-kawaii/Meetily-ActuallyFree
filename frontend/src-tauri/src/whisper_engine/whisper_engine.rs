@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{watch, Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use whisper_rs::{WhisperContext, WhisperContextParameters, WhisperToken, FullParams, SamplingStrategy};
+use whisper_rs::{WhisperContext, WhisperContextParameters, WhisperTokenId, FullParams, SamplingStrategy};
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
 use reqwest::Client;
@@ -102,7 +102,7 @@ impl WhisperEngine {
     fn tokenize_initial_prompt(
         ctx: &WhisperContext,
         initial_prompt: Option<&str>,
-    ) -> Result<Vec<WhisperToken>> {
+        ) -> Result<Vec<WhisperTokenId>> {
         let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) else {
             return Ok(Vec::new());
         };
@@ -378,7 +378,7 @@ impl WhisperEngine {
                     // let _suppressor = crate::whisper_engine::StderrSuppressor::new();
 
                     // Load whisper context with hardware-optimized parameters
-                    WhisperContext::new_with_params(&model_info.path.to_string_lossy(), context_param)
+                    WhisperContext::new_with_params(&model_info.path, context_param)
                         .map_err(|e| anyhow!("Failed to load model {}: {}", model_name, e))?
                     // Suppressor dropped here, stderr restored
                 };
@@ -633,7 +633,7 @@ impl WhisperEngine {
 
         // Additional suppression to reduce C library verbosity
         params.set_suppress_blank(true);
-        params.set_suppress_non_speech_tokens(true);
+        params.set_suppress_nst(true);
         params.set_temperature(adaptive_config.temperature);
         params.set_max_initial_ts(1.0);
         params.set_entropy_thold(2.4);
@@ -670,11 +670,11 @@ impl WhisperEngine {
         let mut total_confidence = 0.0;
         let mut segment_count = 0;
 
-        let num_segments = num_segments?;
+        let num_segments = num_segments;
         for i in 0..num_segments {
-            let segment_text = match state.full_get_segment_text_lossy(i) {
-                Ok(text) => text,
-                Err(_) => continue,
+            let segment_text = match state.get_segment(i).and_then(|seg| seg.to_str_lossy().ok()) {
+                Some(text) => text,
+                None => continue,
             };
 
             // Calculate confidence based on segment length and duration (simplified approach)
@@ -758,7 +758,7 @@ impl WhisperEngine {
 
         // BALANCED settings - good quality with reasonable speed
         params.set_suppress_blank(true);
-        params.set_suppress_non_speech_tokens(true);
+        params.set_suppress_nst(true);
         params.set_temperature(0.3);             // Lower than 0.4 for consistency, higher than 0.0 for quality
         params.set_max_initial_ts(1.0);
         params.set_entropy_thold(2.4);
@@ -828,7 +828,7 @@ impl WhisperEngine {
         state.full(params, &audio_data)?;
 
         // Extract text with improved segment handling
-        let num_segments = state.full_n_segments()?;
+        let num_segments = state.full_n_segments();
 
         // Performance optimization: reduce segment completion logging
         // Only log for significant transcriptions to avoid I/O overhead
@@ -838,13 +838,15 @@ impl WhisperEngine {
         let mut result = String::new();
 
         for i in 0..num_segments {
-            let segment_text = match state.full_get_segment_text_lossy(i) {
-                Ok(text) => text,
-                Err(_) => continue,
+            let segment_text = match state.get_segment(i).and_then(|seg| seg.to_str_lossy().ok()) {
+                Some(text) => text,
+                None => continue,
             };
 
-            let _start_time = state.full_get_segment_t0(i).unwrap_or(0);
-            let _end_time = state.full_get_segment_t1(i).unwrap_or(0);
+            let (_start_time, _end_time) = match state.get_segment(i) {
+                Some(seg) => (seg.start_timestamp(), seg.end_timestamp()),
+                None => (0, 0),
+            };
 
             // Performance optimization: remove per-segment debug logging
             // This was causing significant I/O overhead during transcription
