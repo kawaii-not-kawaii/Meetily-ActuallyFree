@@ -674,7 +674,10 @@ mod tests {
         write_report_zip(&destination, &report).unwrap();
 
         let mut archive = ZipArchive::new(File::open(destination).unwrap()).unwrap();
-        let names: Vec<String> = archive.file_names().map(str::to_owned).collect();
+        let names: Vec<String> = archive
+            .file_names()
+            .map(|name| name.map(|n| n.into_owned()).unwrap_or_default())
+            .collect();
         assert_eq!(names, vec!["report.json", "README.txt"]);
         let mut report_json = String::new();
         archive

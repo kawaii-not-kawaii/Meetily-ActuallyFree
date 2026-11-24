@@ -223,7 +223,10 @@ fn extract_zip(
             Some(name) => extract_dir.join(name),
             None => {
                 // Skip entries with path traversal sequences (e.g., "../")
-                println!("cargo:warning=⚠️  Skipping suspicious ZIP entry: {}", file.name());
+                println!("cargo:warning=⚠️  Skipping suspicious ZIP entry: {}", match file.name() {
+                    Ok(name) => name,
+                    Err(_) => std::borrow::Cow::Borrowed("<unreadable name>"),
+                });
                 continue;
             }
         };
