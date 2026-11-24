@@ -2,7 +2,7 @@
 // Follows the same pattern as whisper_engine/whisper_engine.rs for consistency
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -485,15 +485,12 @@ impl ModelManager {
             }
         }
 
-        // Check for existing partial download to resume
-        let existing_size: u64 = if file_path.exists() {
-            fs::metadata(&file_path)
-                .await
-                .map(|m| m.len())
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        // Resume only a partial that this exact URL produced; record the URL
+        // before any bytes are appended so the next attempt can tell.
+        let existing_size = resumable_partial_size(&file_path, &model_def.download_url).await;
+        if let Err(error) = fs::write(partial_source_path(&file_path), &model_def.download_url).await {
+            log::warn!("Failed to record partial download source: {}", error);
+        }
 
         // Download the file with optimized client settings
         let client = match Client::builder()
@@ -805,6 +802,7 @@ impl ModelManager {
 
             // Clean up invalid file
             let _ = fs::remove_file(&file_path).await;
+            let _ = fs::remove_file(partial_source_path(&file_path)).await;
 
             // Update status
             {
@@ -833,6 +831,9 @@ impl ModelManager {
             model_info.path = file_path.clone();
         }
         controls.remove(model_name);
+        drop(models);
+        drop(controls);
+        let _ = fs::remove_file(partial_source_path(&file_path)).await;
 
         Ok(())
     }
@@ -951,6 +952,7 @@ impl ModelManager {
             fs::remove_file(&file_path).await?;
             log::info!("Deleted model file: {}", file_path.display());
         }
+        let _ = fs::remove_file(partial_source_path(&file_path)).await;
 
         // Update status
         {
@@ -969,9 +971,64 @@ impl ModelManager {
     }
 }
 
+/// Sidecar recording which URL produced a partial GGUF (`<file>.source`).
+fn partial_source_path(file_path: &Path) -> PathBuf {
+    let mut name = file_path.as_os_str().to_owned();
+    name.push(".source");
+    PathBuf::from(name)
+}
+
+/// Bytes of `file_path` that may be resumed from `url`. A partial with no
+/// source record (e.g. from a build that downloaded `resolve/main`) or from a
+/// different URL is deleted: appending another revision's bytes to it could
+/// pass the size and magic checks yet be a corrupt model.
+async fn resumable_partial_size(file_path: &Path, url: &str) -> u64 {
+    let size = fs::metadata(file_path).await.map(|m| m.len()).unwrap_or(0);
+    if size == 0 {
+        return 0;
+    }
+    let recorded = fs::read_to_string(partial_source_path(file_path)).await.ok();
+    if recorded.as_deref() == Some(url) {
+        return size;
+    }
+    log::warn!(
+        "Restarting model download: partial file came from a different or unknown source"
+    );
+    if let Err(error) = fs::remove_file(file_path).await {
+        log::warn!("Failed to remove stale partial download: {}", error);
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn partial_downloads_resume_only_from_their_recorded_source() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("model.gguf");
+        let pinned = "https://huggingface.co/org/repo/resolve/0123456789abcdef0123456789abcdef01234567/model.gguf";
+
+        assert_eq!(resumable_partial_size(&path, pinned).await, 0, "no file");
+
+        fs::write(&path, b"GGUF-partial").await.unwrap();
+        assert_eq!(resumable_partial_size(&path, pinned).await, 0, "legacy partial has no source");
+        assert!(!path.exists(), "legacy partial is discarded");
+
+        fs::write(&path, b"GGUF-partial").await.unwrap();
+        fs::write(partial_source_path(&path), "https://huggingface.co/org/repo/resolve/main/model.gguf")
+            .await
+            .unwrap();
+        assert_eq!(resumable_partial_size(&path, pinned).await, 0, "different source");
+        assert!(!path.exists());
+
+        fs::write(&path, b"GGUF-partial").await.unwrap();
+        fs::write(partial_source_path(&path), pinned).await.unwrap();
+        assert_eq!(resumable_partial_size(&path, pinned).await, 12, "same source resumes");
+        assert!(path.exists());
+        assert_eq!(partial_source_path(&path), temp.path().join("model.gguf.source"));
+    }
 
     #[tokio::test]
     async fn scan_marks_partial_model_incomplete_and_exact_model_available() {

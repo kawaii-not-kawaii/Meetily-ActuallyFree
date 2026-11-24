@@ -102,3 +102,10 @@ SHA or PR.
   catalog and the downloadable set cannot drift apart. Tests:
   `every_catalog_model_downloads_from_the_pinned_revision` (whisper_engine) and
   `every_model_download_is_pinned_to_a_hugging_face_revision` (summary models).
+
+  Summary downloads resume only a partial that the same URL produced: the URL is
+  recorded in `<model>.gguf.source` before bytes are appended. A partial with no
+  record (from a build that used `resolve/main`) or with a different URL is deleted
+  and downloaded from the start. Without this, mixed-revision bytes could pass the
+  size and GGUF-magic checks. Test:
+  `partial_downloads_resume_only_from_their_recorded_source`.
