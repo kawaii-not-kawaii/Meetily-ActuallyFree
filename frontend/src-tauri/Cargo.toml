@@ -60,7 +60,7 @@ openmp = ["whisper-rs/openmp"]     # OpenMP parallel processing
 tauri-build = { version = "2.6.3", features = [] }
 reqwest = { version = "0.11", features = ["blocking", "multipart", "json", "stream"] }
 which = "6.0.1"
-zip = "2.2"           # ZIP extraction (Windows, macOS)
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] } # ZIP extraction (Windows, macOS)
 tar = "0.4"           # TAR extraction (Linux)
 xz2 = "0.1"           # XZ decompression (Linux)
 sha2 = "0.10"
@@ -135,7 +135,7 @@ lazy_static = { version = "1.4.0" }
 realfft = "3.4.0"
 regex = "1.11.0"
 ndarray = "0.16"
-zip = "2.2"           # Reading .npz (zip of .npy) diarization transforms
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2"] } # Reading .npz (zip of .npy) diarization transforms
 sha2 = "0.10"         # SHA-256 verification for downloaded models
 bytes = { version = "1.9.0", features = ["serde"] }
 
