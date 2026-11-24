@@ -460,7 +460,7 @@ jobs:
           MEETILY_RSA_PUBLIC_KEY: ${{ secrets.MEETILY_RSA_PUBLIC_KEY }}
           # Supabase configuration (for online license verification)
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          TAURI_GPU_FEATURE: ${{ contains(matrix.platform, 'macos') && 'none' || '' }}
         with:
           projectPath: frontend
           args: ${{ matrix.args }} ${{ steps.build-features.outputs.features }} ${{ steps.windows-portability.outputs.args }}
@@ -471,7 +471,14 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tauri updater signing (ALWAYS enabled for .sig files)
+          # frontend/scripts/tauri-auto.js moves every argument after `--`
+          # when it detects a GPU feature, which turns --target into a cargo
+          # flag: the binary lands in target/<triple>/release while the Tauri
+          # bundler looks in target/release ("can't open main binary"). macOS
+          # needs no extra feature (Metal/CoreML are on by default in the Rust
+          # crate), so pin the detection to CPU-only to keep --target with the
+          # Tauri CLI.
+          TAURI_GPU_FEATURE: ${{ contains(matrix.platform, 'macos') && 'none' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # License validation RSA public key (embedded at build time)
