@@ -75,8 +75,9 @@ SHA or PR.
 
 ## Known follow-ups (not changed here)
 
-- Parakeet has the same `Downloading` payload mismatch that Whisper had. The backend
-  sends `{ Downloading: { progress } }`, but `lib/parakeet.ts` and
-  `ParakeetModelManager` read a number.
+- ~~Parakeet has the same `Downloading` payload mismatch that Whisper had.~~ Fixed in
+  the follow-up PR: `lib/parakeet.ts` and `ParakeetModelManager` now use
+  `{ Downloading: { progress } }`, covered by
+  `tests/download-progress/parakeet-manager.test.tsx`.
 - The Parakeet v2 Hugging Face source still uses `resolve/main`. Upstream pins it
   separately.
