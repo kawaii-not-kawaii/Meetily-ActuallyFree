@@ -428,7 +428,10 @@ impl SummaryService {
             if provider == LLMProvider::CustomOpenAI {
                 match SettingsRepository::get_custom_openai_config(&pool).await {
                     Ok(Some(config)) => {
-                        info!("✓ Using custom OpenAI endpoint: {}", config.endpoint);
+                        info!(
+                            "✓ Using custom OpenAI endpoint origin: {}",
+                            crate::utils::url_origin_for_log(&config.endpoint)
+                        );
                         (
                             Some(config.endpoint),
                             config.api_key,

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
 
+use crate::utils::url_origin_for_log;
 use crate::{
     database::{
         models::MeetingModel,
@@ -249,8 +250,7 @@ async fn get_auth_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
     match store.get("authToken") {
         Some(token) => {
             if let Some(token_str) = token.as_str() {
-                let truncated = token_str.chars().take(20).collect::<String>();
-                log_info!("Found auth token: {}", truncated);
+                log_info!("Auth token loaded from store");
                 Some(token_str.to_string())
             } else {
                 log_warn!("Auth token is not a string");
@@ -266,7 +266,7 @@ async fn get_auth_token<R: Runtime>(app: &AppHandle<R>) -> Option<String> {
 
 // Helper function to get server address - now hardcoded
 async fn get_server_address<R: Runtime>(_app: &AppHandle<R>) -> Result<String, String> {
-    log_info!("Using hardcoded server URL: {}", APP_SERVER_URL);
+    log_info!("Using hardcoded server origin: {}", url_origin_for_log(APP_SERVER_URL));
     Ok(APP_SERVER_URL.to_string())
 }
 
@@ -283,7 +283,13 @@ async fn make_api_request<R: Runtime, T: for<'de> Deserialize<'de>>(
     let server_url = get_server_address(app).await?;
 
     let url = format!("{}{}", server_url, endpoint);
-    log_info!("Making {} request to: {}", method, url);
+    // The endpoint may carry query parameters (e.g. search text); log the path only.
+    log_info!(
+        "Making {} request to {}{}",
+        method,
+        url_origin_for_log(&server_url),
+        endpoint.split('?').next().unwrap_or_default()
+    );
 
     let mut request = match method.to_uppercase().as_str() {
         "GET" => client.get(&url),
@@ -317,7 +323,7 @@ async fn make_api_request<R: Runtime, T: for<'de> Deserialize<'de>>(
 
     let response = request.send().await.map_err(|e| {
         let error_msg = format!("Request failed: {}", e);
-        log_error!("{}", error_msg);
+        log_error!("Request failed: {}", e.without_url());
         error_msg
     })?;
 
@@ -330,7 +336,8 @@ async fn make_api_request<R: Runtime, T: for<'de> Deserialize<'de>>(
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
         let error_msg = format!("HTTP {}: {}", status, error_text);
-        log_error!("{}", error_msg);
+        // Response bodies can echo request content or credentials; keep them out of logs.
+        log_error!("HTTP {} (response body: {} bytes)", status, error_text.len());
         return Err(error_msg);
     }
 
@@ -340,9 +347,7 @@ async fn make_api_request<R: Runtime, T: for<'de> Deserialize<'de>>(
         error_msg
     })?;
 
-    // Safely truncate response for logging, respecting UTF-8 character boundaries
-    let truncated = response_text.chars().take(200).collect::<String>();
-    log_info!("Response body: {}", truncated);
+    log_info!("Response body received: {} bytes", response_text.len());
 
     serde_json::from_str(&response_text).map_err(|e| {
         let error_msg = format!("Failed to parse JSON: {}", e);
@@ -520,7 +525,7 @@ pub async fn api_search_transcripts<R: Runtime>(
             Ok(results)
         }
         Err(e) => {
-            log_error!("Error searching transcripts for query '{}': {}", query, e);
+            log_error!("Transcript search failed: {}", e);
             Err(format!("Failed to search transcripts: {}", e))
         }
     }
@@ -623,7 +628,7 @@ pub async fn api_get_model_config<R: Runtime>(
                 &config.provider,
                 &config.model,
                 &config.whisper_model,
-                &config.ollama_endpoint
+                config.ollama_endpoint.as_deref().map(url_origin_for_log)
             );
             match SettingsRepository::get_api_key(pool, &config.provider).await {
                 Ok(api_key) => {
@@ -677,7 +682,7 @@ pub async fn api_save_model_config<R: Runtime>(
         &provider,
         &model,
         &whisper_model,
-        &ollama_endpoint,
+        ollama_endpoint.as_deref().map(url_origin_for_log),
         &summary_max_tokens,
         &claude_cli_path
     );
@@ -1400,7 +1405,7 @@ pub async fn test_backend_connection<R: Runtime>(
     let client = reqwest::Client::new();
     let server_url = get_server_address(&app).await?;
 
-    log_debug!("Testing connection to: {}", server_url);
+    log_debug!("Testing connection to origin: {}", url_origin_for_log(&server_url));
 
     let mut request = client.get(&format!("{}/docs", server_url));
 
@@ -1429,7 +1434,7 @@ pub async fn debug_backend_connection<R: Runtime>(app: AppHandle<R>) -> Result<S
     // Test 1: Check server address from store
     let server_url = match get_server_address(&app).await {
         Ok(url) => {
-            log_debug!("✓ Server URL from store: {}", url);
+            log_debug!("✓ Server origin from store: {}", url_origin_for_log(&url));
             url
         }
         Err(e) => {
@@ -1442,7 +1447,7 @@ pub async fn debug_backend_connection<R: Runtime>(app: AppHandle<R>) -> Result<S
     let client = reqwest::Client::new();
     let test_url = format!("{}/docs", server_url); // Try the docs endpoint which should be public
 
-    log_debug!("Testing connection to: {}", test_url);
+    log_debug!("Testing connection to origin: {}", url_origin_for_log(&test_url));
 
     match client.get(&test_url).send().await {
         Ok(response) => {
@@ -1522,8 +1527,8 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
     top_p: Option<f32>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "api_save_custom_openai_config called: endpoint='{}', model='{}'",
-        &endpoint,
+        "api_save_custom_openai_config called: endpoint_origin='{}', model='{}'",
+        url_origin_for_log(&endpoint),
         &model
     );
 
@@ -1570,7 +1575,10 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
 
     match SettingsRepository::save_custom_openai_config(pool, &config).await {
         Ok(()) => {
-            log_info!("✅ Successfully saved custom OpenAI config for endpoint: {}", config.endpoint);
+            log_info!(
+                "✅ Successfully saved custom OpenAI config for endpoint origin: {}",
+                url_origin_for_log(&config.endpoint)
+            );
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Custom OpenAI configuration saved successfully"
@@ -1596,8 +1604,11 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
     match SettingsRepository::get_custom_openai_config(pool).await {
         Ok(config) => {
             if let Some(ref c) = config {
-                log_info!("✅ Found custom OpenAI config: endpoint='{}', model='{}'",
-                    c.endpoint, c.model);
+                log_info!(
+                    "✅ Found custom OpenAI config: endpoint_origin='{}', model='{}'",
+                    url_origin_for_log(&c.endpoint),
+                    c.model
+                );
             } else {
                 log_info!("No custom OpenAI config found");
             }
@@ -1620,8 +1631,8 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
     model: String,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "api_test_custom_openai_connection called: endpoint='{}', model='{}'",
-        &endpoint,
+        "api_test_custom_openai_connection called: endpoint_origin='{}', model='{}'",
+        url_origin_for_log(&endpoint),
         &model
     );
 
@@ -1698,7 +1709,10 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                         }
 
                         // Response was 200 but doesn't match OpenAI format
-                        log_warn!("⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}", response_text);
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format ({} bytes)",
+                            response_text.len()
+                        );
                         Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
                     }
                     Err(e) => {
@@ -1707,11 +1721,17 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                     }
                 }
             } else {
-                log_warn!("⚠️ Custom OpenAI connection test failed with status {}: {}", status, response_text);
+                log_warn!(
+                    "⚠️ Custom OpenAI connection test failed with status {} ({} byte body)",
+                    status,
+                    response_text.len()
+                );
                 Err(format!("Connection failed with status {}: {}", status, response_text))
             }
         }
         Err(e) => {
+            // reqwest errors embed the full URL, which may carry an API key.
+            let e = e.without_url();
             log_error!("❌ Custom OpenAI connection test failed: {}", e);
             if e.is_timeout() {
                 Err("Connection timed out. Please check the endpoint URL.".to_string())

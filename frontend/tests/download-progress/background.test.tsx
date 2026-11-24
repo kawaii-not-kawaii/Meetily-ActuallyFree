@@ -119,7 +119,7 @@ test('errors clear active cards and retries restore them without duplicate notif
 });
 
 test('restored native Whisper progress appears after leaving the dedicated setup download step', async () => {
-  step = 3; whisperStatus = { Downloading: 62 };
+  step = 3; whisperStatus = { Downloading: { progress: 62 } };
   await act(async () => { root = create(<App />); });
   expect(bars()).toHaveLength(0);
   step = 4;

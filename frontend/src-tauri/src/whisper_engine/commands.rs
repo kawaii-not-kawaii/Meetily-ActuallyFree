@@ -1,5 +1,5 @@
 use crate::config::WHISPER_MODEL_CATALOG;
-use crate::whisper_engine::{ModelInfo, WhisperEngine};
+use crate::whisper_engine::{is_download_cancelled, CancelDownloadOutcome, ModelInfo, WhisperEngine};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{command, AppHandle, Emitter, Manager, Runtime};
@@ -863,6 +863,15 @@ pub async fn whisper_download_model(
                 }
                 Ok(())
             }
+            // Optional activation (enable_post_call) must still reject on cancel:
+            // its caller treats a resolved promise as "downloaded and enabled".
+            Err(e) if is_download_cancelled(&e) && !enable_post_call.unwrap_or(false) => {
+                // Cancellation is handled by the existing cancel command/UI path. Do not
+                // emit a terminal event or reject the original request, which would
+                // otherwise overwrite that path's Missing state with an error.
+                log::info!("Download cancelled for {}", model_name);
+                Ok(())
+            }
             Err(e) => {
                 // Emit error event
                 if let Err(emit_e) = app_handle.emit(
@@ -884,7 +893,7 @@ pub async fn whisper_download_model(
 }
 
 #[command]
-pub async fn whisper_cancel_download(model_name: String) -> Result<(), String> {
+pub async fn whisper_cancel_download(model_name: String) -> Result<CancelDownloadOutcome, String> {
     let engine = {
         let guard = WHISPER_ENGINE.lock().unwrap();
         guard.as_ref().cloned()
