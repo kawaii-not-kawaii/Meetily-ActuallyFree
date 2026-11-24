@@ -11,6 +11,11 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+/// v3 is pinned to a Hugging Face revision (upstream d16c04f) so downloads stay
+/// reproducible and match the exact sizes in `download_file_sizes`; a moved
+/// `main` could otherwise fail validation or ship different weights.
+const PARAKEET_V3_HF_BASE_URL: &str = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce";
+
 pub(crate) const DOWNLOAD_CANCELLED_MESSAGE: &str = "Download cancelled by user";
 
 /// Quantization type for Parakeet models
@@ -151,7 +156,7 @@ impl ParakeetEngine {
             vec!["https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main"]
         } else {
             vec![
-                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main",
+                PARAKEET_V3_HF_BASE_URL,
                 "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx",
             ]
         }
@@ -1237,7 +1242,7 @@ mod tests {
         assert_eq!(
             ParakeetEngine::download_base_urls("parakeet-tdt-0.6b-v3-int8"),
             vec![
-                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main",
+                "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
                 "https://github.com/TylerBuza/Meetily-ActuallyFree/releases/download/parakeet-tdt-0.6b-v3-onnx",
             ]
         );
