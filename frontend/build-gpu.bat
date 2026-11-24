@@ -158,6 +158,10 @@ echo    Building in %HELPER_DIR% with features: %HELPER_FEATURES%
 pushd "%HELPER_DIR%"
 REM llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
 set "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE"
+REM The CMake hook forces GGML_NATIVE=OFF (llama-cpp-sys-2 forwards CMAKE_* env
+REM vars) so a release helper is not tuned to this machine's CPU.
+set "CMAKE_PROJECT_INCLUDE=%CD%\..\.github\force-portable-ggml.cmake"
+set "CMAKE_PROJECT_INCLUDE=!CMAKE_PROJECT_INCLUDE:\=/!"
 call cargo build --release %HELPER_FEATURES%
 if errorlevel 1 (
     echo ❌ Failed to build llama-helper
@@ -165,6 +169,17 @@ if errorlevel 1 (
     exit /b 1
 )
 set "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL="
+set "CMAKE_PROJECT_INCLUDE="
+set "HELPER_TARGET_DIR=%CD%\..\target"
+if defined CARGO_TARGET_DIR set "HELPER_TARGET_DIR=%CARGO_TARGET_DIR%"
+REM A stale native llama-cpp-sys-2 cache also fails here; delete
+REM target\release\build\llama-cpp-sys-2-* and rebuild in that case.
+node "%CD%\..\.github\verify-portable-ggml.cjs" "!HELPER_TARGET_DIR!\release" llama
+if errorlevel 1 (
+    echo ❌ llama-helper build is not CPU-portable
+    popd
+    exit /b 1
+)
 popd
 echo ✅ llama-helper built successfully
 

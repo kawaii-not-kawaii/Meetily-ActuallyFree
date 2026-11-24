@@ -55,9 +55,15 @@ echo [helper] building llama-helper (CPU) release
 cd /d "%REPO%\llama-helper"
 REM llama.cpp's bundled cpp-httplib does not compile against OpenSSL 4 (const X509_NAME); the helper never uses HTTPS, so build it without OpenSSL.
 set "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE"
+REM Force GGML_NATIVE=OFF (llama-cpp-sys-2 forwards CMAKE_* env vars) so the
+REM release helper is not tuned to this machine's CPU, then verify it.
+set "CMAKE_PROJECT_INCLUDE=%REPO:\=/%/.github/force-portable-ggml.cmake"
 cargo build --release
 if errorlevel 1 ( echo [helper] build FAILED & exit /b 1 )
 set "CMAKE_DISABLE_FIND_PACKAGE_OpenSSL="
+set "CMAKE_PROJECT_INCLUDE="
+node "%REPO%\.github\verify-portable-ggml.cjs" "%REPO%\target\release" llama
+if errorlevel 1 ( echo [helper] llama-helper is not CPU-portable & exit /b 1 )
 if not exist "%ROOT%src-tauri\binaries" mkdir "%ROOT%src-tauri\binaries"
 copy /Y "%REPO%\target\release\llama-helper.exe" "%ROOT%src-tauri\binaries\llama-helper-x86_64-pc-windows-msvc.exe" >nul
 if errorlevel 1 ( echo [helper] copy FAILED & exit /b 1 )

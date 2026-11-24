@@ -280,8 +280,21 @@ cache from an older native build also fails it (delete
 `release\build\whisper-rs-sys-*`). Unit tests: `node --test
 .github/verify-portable-ggml.test.cjs` (also in `pr-checks.yml`). The verifier relies
 on the pre-Rust-1.100 `target/<profile>/build/<pkg>-<hash>/out` layout, which the
-pinned toolchain in `rust-toolchain.toml` keeps. llama-helper's own ggml build is
-not covered by this hook.
+pinned toolchain in `rust-toolchain.toml` keeps.
+
+llama-helper builds its own ggml through llama-cpp-sys-2, which already passes
+`GGML_NATIVE=OFF` unless RUSTFLAGS contain `target-cpu=native` (then it turns it ON).
+Release builds of the helper set the same `CMAKE_PROJECT_INCLUDE` hook, which wins
+even over `target-cpu=native`: `build.yml`, `build-windows.yml`,
+`build-devtest.yml`, `build-linux.yml`, `build-macos.yml`, `build-gpu.sh`,
+`build-gpu.bat`, `build-cuda-env.bat` and `build-macos-apple-silicon.sh`. The x86_64
+paths then run `node .github/verify-portable-ggml.cjs target/release llama`, which
+checks every `llama-cpp-sys-2-*` CMake cache like the Whisper check (macOS arm64
+builds are not verified). `build-universal-windows.ps1` does not build the helper;
+it packages whatever sidecar is already in `src-tauri/binaries` (for example from
+`build-gpu.bat` or `build-cuda-env.bat`), so build that first. The helper
+is not built with an `x86-64-v2` RUSTFLAGS baseline outside the Windows workflows
+that already export one.
 The packager reads release notes with .NET `ReadAllText` so Windows PowerShell
 does not attach provider/filesystem metadata to updater `notes`. The payload
 verifier requires `notes` to be a string. This was caught during v0.2.18 draft
