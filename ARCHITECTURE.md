@@ -574,6 +574,13 @@ into Custom Server or other providers. Claude responses must report a completed
 stop reason; `max_tokens`, refusal, or missing completion must fail before an
 incomplete summary is persisted or cached.
 
+The same JSON holds the model-prefix limits and the single list of suggested
+fallback models (`fallbackModels`), read by Rust (`claude_catalog_limit`,
+`claude_fallback_models`) and TypeScript (`claudeCatalogLimit`,
+`CLAUDE_FALLBACK_MODELS`), so the two sides cannot diverge. Prefix matching is
+longest-prefix-wins. The 64,000 application clamp still applies on top of the
+catalog limit until streaming lands.
+
 Summary prompts serialize every persisted transcript row with timestamp,
 speaker label, and text. This is required for a regeneration after speaker
 rename to actually expose the renamed identities to the model. Generated

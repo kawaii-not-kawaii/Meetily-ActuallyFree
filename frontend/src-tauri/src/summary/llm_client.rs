@@ -52,6 +52,13 @@ struct ClaudeOutputLimits {
     fallback_limit: u32,
     application_limit: u32,
     models: Vec<ClaudeModelLimit>,
+    fallback_models: Vec<ClaudeFallbackModel>,
+}
+
+#[derive(Deserialize)]
+pub struct ClaudeFallbackModel {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -67,13 +74,26 @@ static CLAUDE_OUTPUT_LIMITS: std::sync::LazyLock<ClaudeOutputLimits> = std::sync
         .expect("bundled Claude output limits must be valid")
 });
 
-pub fn claude_max_tokens(model_name: &str, configured: Option<i64>) -> Result<u32, String> {
+/// Suggested Claude models used when the live model list is unavailable. The
+/// same JSON feeds the TypeScript settings UI.
+pub fn claude_fallback_models() -> &'static [ClaudeFallbackModel] {
+    &CLAUDE_OUTPUT_LIMITS.fallback_models
+}
+
+/// Catalog output limit before the application clamp. The longest matching
+/// prefix wins, so `claude-opus-4-5` is not captured by `claude-opus-4`.
+pub fn claude_catalog_limit(model_name: &str) -> u32 {
     let limits = &*CLAUDE_OUTPUT_LIMITS;
     let model = model_name.to_lowercase();
-    let maximum = limits.application_limit.min(limits.models.iter().find(|entry| {
+    limits.models.iter().filter(|entry| {
         model == entry.prefix || model.starts_with(&format!("{}{}", entry.prefix,
             if entry.prefix.ends_with('-') { "" } else { "-" }))
-    }).map(|entry| entry.limit).unwrap_or(limits.fallback_limit));
+    }).max_by_key(|entry| entry.prefix.len()).map(|entry| entry.limit).unwrap_or(limits.fallback_limit)
+}
+
+pub fn claude_max_tokens(model_name: &str, configured: Option<i64>) -> Result<u32, String> {
+    let limits = &*CLAUDE_OUTPUT_LIMITS;
+    let maximum = limits.application_limit.min(claude_catalog_limit(model_name));
     match configured {
         None => Ok(limits.default_tokens.min(maximum)),
         Some(value) if value > 0 && value <= i64::from(maximum) => Ok(value as u32),
@@ -393,6 +413,29 @@ fn provider_name(provider: &LLMProvider) -> &str {
 #[cfg(test)]
 mod claude_output_tests {
     use super::*;
+
+    #[test]
+    fn catalog_resolves_every_model_to_its_limit_by_longest_prefix() {
+        let cases: &[(&str, u32)] = &[
+            ("claude-3-opus-20240229", 4096), ("claude-3-5-sonnet-latest", 8192), ("claude-3-7-sonnet-latest", 64000),
+            ("claude-sonnet-4-20250514", 64000), ("claude-sonnet-4-5-20250929", 64000), ("claude-sonnet-4-6", 128000),
+            ("claude-sonnet-5", 128000), ("claude-sonnet-5-5", 128000),
+            ("claude-haiku-4-5-20251001", 64000), ("claude-haiku-5", 128000), ("claude-haiku-5-5", 128000),
+            ("claude-opus-4-1-20250805", 32000), ("claude-opus-4-20250514", 32000), ("claude-opus-4-5-20251101", 64000),
+            ("claude-opus-4-6", 128000), ("claude-opus-4-7", 128000), ("claude-opus-4-8", 128000),
+            ("claude-opus-5", 128000), ("claude-opus-5-5", 128000),
+            ("claude-fable-5-2", 128000), ("claude-mythos-5-2", 128000), ("claude-unknown", 8192),
+        ];
+        for (model, limit) in cases {
+            assert_eq!(claude_catalog_limit(model), *limit, "{model}");
+        }
+    }
+
+    #[test]
+    fn fallback_models_have_no_retired_entries() {
+        let ids: Vec<&str> = claude_fallback_models().iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-haiku-4-5"]);
+    }
 
     #[test]
     fn validates_budget_without_confusing_model_generations() {
