@@ -73,7 +73,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Get pnpm store directory
         shell: bash
@@ -370,8 +370,8 @@ jobs:
             LLAMA_FEATURES="--features metal"
             echo "Using Metal GPU acceleration for macOS"
           elif [[ "${{ matrix.platform }}" == *"windows"* ]]; then
-            LLAMA_FEATURES="--features vulkan"
-            echo "Using Vulkan GPU acceleration for Windows"
+            # CPU-only: the Vulkan build of llama-helper fails on the Windows runner in llama.cpp's vulkan-shaders-gen step; build-windows.yml builds the helper CPU-only for the same reason.
+            echo "Using CPU-only mode for Windows (Vulkan llama-helper build fails on the runner)"
           else
             echo "Using CPU-only mode for Linux"
           fi
