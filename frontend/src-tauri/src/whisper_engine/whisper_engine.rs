@@ -17,6 +17,21 @@ use super::acceleration::{whisper_context_acceleration_for, WhisperCompiledBacke
 
 const MAX_INITIAL_PROMPT_TOKENS: usize = 224;
 
+/// Whisper downloads are pinned to a Hugging Face revision of
+/// ggerganov/whisper.cpp so a moved `main` cannot change the weights we ship
+/// against; at this revision every catalog file matches `main` byte-for-byte
+/// and clears the catalog's 90% size check.
+const WHISPER_HF_BASE_URL: &str =
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1";
+
+/// Download URL for a catalog model, or `None` for an unknown model name.
+fn whisper_model_download_url(model_name: &str) -> Option<String> {
+    WHISPER_MODEL_CATALOG
+        .iter()
+        .find(|(name, ..)| *name == model_name)
+        .map(|(_, filename, ..)| format!("{WHISPER_HF_BASE_URL}/{filename}"))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelStatus {
     Available,
@@ -1111,23 +1126,10 @@ impl WhisperEngine {
     pub async fn download_model(&self, model_name: &str, progress_callback: Option<Box<dyn Fn(u8) + Send>>) -> Result<()> {
         log::info!("Starting download for model: {}", model_name);
 
-        let model_url = match model_name {
-            "tiny" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
-            "base" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-            "small" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-            "medium" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
-            "large-v3-turbo" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-            "large-v3" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
-            "tiny-q5_1" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin",
-            "base-q5_1" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
-            "small-q5_1" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
-            "medium-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin",
-            "large-v3-turbo-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
-            "large-v3-q5_0" => "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
-            _ => return Err(anyhow!("Unsupported model: {}", model_name)),
-        };
+        let model_url = whisper_model_download_url(model_name)
+            .ok_or_else(|| anyhow!("Unsupported model: {}", model_name))?;
 
-        self.download_model_from_url(model_name, model_url, progress_callback).await
+        self.download_model_from_url(model_name, &model_url, progress_callback).await
     }
 
     async fn download_model_from_url(
@@ -1317,6 +1319,25 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
     use tokio::time::{timeout, Duration};
+
+    #[test]
+    fn every_catalog_model_downloads_from_the_pinned_revision() {
+        assert_eq!(WHISPER_MODEL_CATALOG.len(), 12);
+        for &(name, filename, ..) in WHISPER_MODEL_CATALOG {
+            assert_eq!(
+                whisper_model_download_url(name).as_deref(),
+                Some(format!(
+                    "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/{filename}"
+                ))
+                .as_deref(),
+            );
+        }
+        assert_eq!(
+            whisper_model_download_url("large-v3-turbo").as_deref(),
+            Some("https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin"),
+        );
+        assert_eq!(whisper_model_download_url("large-v2"), None);
+    }
 
     fn tiny_model(models: &[ModelInfo]) -> &ModelInfo {
         models

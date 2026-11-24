@@ -163,7 +163,11 @@ pub struct ModelDef {
 }
 
 /// Get all available built-in AI models
-/// Add new models here - the system will automatically detect and manage them
+/// Add new models here - the system will automatically detect and manage them.
+/// Each `download_url` is pinned to a Hugging Face revision (not `main`): the
+/// model manager accepts only a file of exactly `size_bytes`, so a re-upload on
+/// `main` would otherwise break downloads or silently change the weights. When
+/// adding a model, pin the repo's current commit and HEAD-check the size there.
 pub fn get_available_models() -> Vec<ModelDef> {
     vec![
         // Qwen 3.5 2B - Balanced tier
@@ -172,7 +176,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Qwen 3.5 2B (Balanced)".to_string(),
             gguf_file: "Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             template: "qwen3.5_nonthinking".to_string(),
-            download_url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf".to_string(),
             size_mb: 1221,
             size_bytes: 1_280_835_840,
             context_size: 32768,
@@ -186,7 +190,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Qwen 3.5 4B (High Quality)".to_string(),
             gguf_file: "Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             template: "qwen3.5_nonthinking".to_string(),
-            download_url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf".to_string(),
             size_mb: 2614,
             size_bytes: 2_740_937_888,
             context_size: 32768,
@@ -200,7 +204,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Gemma 3 4B (Balanced)".to_string(),
             gguf_file: "gemma-3-4b-it-Q4_K_M.gguf".to_string(),
             template: "gemma3".to_string(),
-            download_url: "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/71506238f970075ca85125cd749c28b1b0eee84e/google_gemma-3-4b-it-Q4_K_M.gguf".to_string(),
             size_mb: 2374,
             size_bytes: 2_489_758_112,
             context_size: 32768,
@@ -214,7 +218,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             display_name: "Gemma 3 1B (Fast)".to_string(),
             gguf_file: "gemma-3-1b-it-Q8_0.gguf".to_string(),
             template: "gemma3".to_string(),
-            download_url: "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q8_0.gguf".to_string(),
+            download_url: "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/116f76234503685a98f572982177b11d44ec8ff1/google_gemma-3-1b-it-Q8_0.gguf".to_string(),
             size_mb: 1019,
             size_bytes: 1_069_306_624,
             context_size: 32768,
@@ -340,6 +344,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_model_download_is_pinned_to_a_hugging_face_revision() {
+        for model in get_available_models() {
+            let (_, revision_and_file) = model
+                .download_url
+                .split_once("/resolve/")
+                .expect("Hugging Face resolve URL");
+            let (revision, file) = revision_and_file.split_once('/').expect("revision/file");
+            assert_eq!(revision.len(), 40, "{} is not pinned to a commit", model.name);
+            assert!(revision.chars().all(|c| c.is_ascii_hexdigit()), "{}", model.name);
+            assert!(file.ends_with(".gguf"), "{}", model.name);
+        }
+    }
+
+    #[test]
     fn qwen35_models_are_registered_with_expected_metadata() {
         let qwen_2b = get_model_by_name("qwen3.5:2b").expect("qwen 2b model should exist");
         assert_eq!(qwen_2b.display_name, "Qwen 3.5 2B (Balanced)");
@@ -347,7 +365,7 @@ mod tests {
         assert_eq!(qwen_2b.template, "qwen3.5_nonthinking");
         assert_eq!(
             qwen_2b.download_url,
-            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf"
+            "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-Q4_K_M.gguf"
         );
         assert_eq!(qwen_2b.size_mb, 1221);
         assert_eq!(qwen_2b.context_size, 32768);
@@ -360,7 +378,7 @@ mod tests {
         assert_eq!(qwen_4b.template, "qwen3.5_nonthinking");
         assert_eq!(
             qwen_4b.download_url,
-            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
+            "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf"
         );
         assert_eq!(qwen_4b.size_mb, 2614);
         assert_eq!(qwen_4b.context_size, 32768);
@@ -374,7 +392,7 @@ mod tests {
         assert_eq!(gemma_1b.gguf_file, "gemma-3-1b-it-Q8_0.gguf");
         assert_eq!(
             gemma_1b.download_url,
-            "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/main/google_gemma-3-1b-it-Q8_0.gguf"
+            "https://huggingface.co/bartowski/google_gemma-3-1b-it-GGUF/resolve/116f76234503685a98f572982177b11d44ec8ff1/google_gemma-3-1b-it-Q8_0.gguf"
         );
         assert_eq!(gemma_1b.sampling, SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]));
         assert_eq!(gemma_1b.sampling.temperature, 1.0);
@@ -388,7 +406,7 @@ mod tests {
         let gemma_4b = get_model_by_name("gemma3:4b").expect("gemma 4b model should exist");
         assert_eq!(
             gemma_4b.download_url,
-            "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/main/google_gemma-3-4b-it-Q4_K_M.gguf"
+            "https://huggingface.co/bartowski/google_gemma-3-4b-it-GGUF/resolve/71506238f970075ca85125cd749c28b1b0eee84e/google_gemma-3-4b-it-Q4_K_M.gguf"
         );
         assert_eq!(gemma_4b.sampling, SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]));
         assert_eq!(gemma_4b.sampling.temperature, 1.0);
