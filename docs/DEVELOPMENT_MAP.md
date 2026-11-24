@@ -180,6 +180,13 @@ are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
 Claude summary streaming (SSE, idle timeout, shared HTTP client) is documented in
 [CLAUDE_STREAMING.md](CLAUDE_STREAMING.md).
 
+Summary entry point: `api_process_transcript` takes the flat `text` (model input
+and cache source, unchanged) plus optional `segments` (`SummarySegment`: start/end
+seconds from recording start, stored speaker label verbatim, line text), built by
+`frontend/src/lib/summary-segments.ts` for generate and regenerate. Segments are
+accepted and logged only; sectioning will consume them later. No separate source
+field exists in stored transcripts, so the speaker label is the provenance.
+
 `diarization/mod.rs` owns persisted engine settings and offline command dispatch.
 Nemotron is Auto-detect only; manual counts belong to Pyannote. Rerunning speaker
 identification must preserve transcript text, row identity, and timestamps.

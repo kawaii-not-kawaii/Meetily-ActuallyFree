@@ -334,7 +334,14 @@ impl SummaryService {
         custom_prompt: String,
         template_id: String,
         summary_language: Option<String>,
+        // Structured view of `text` for sectioning; absent for legacy callers.
+        // Not yet consumed: the flat `text` stays the sole model input and
+        // cache-key source so output is unchanged.
+        segments: Option<Vec<crate::summary::commands::SummarySegment>>,
     ) {
+        if let Some(segments) = &segments {
+            info!("Summary request for {} carries {} structured segments", meeting_id, segments.len());
+        }
         let _run_guard = SummaryRunGuard {
             meeting_id: meeting_id.clone(),
             registration: registration.clone(),

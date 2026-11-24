@@ -31,6 +31,25 @@ pub struct SummaryResponse {
     pub user_edited: bool,
 }
 
+/// One transcript row as the UI saw it when it built the flat summary text.
+///
+/// Carried alongside `text` so later sectioning can compute pauses, speaker
+/// turns and duration without re-parsing the text. Times are seconds from
+/// recording start (same unit as `Transcript.audio_*_time`); `speaker` is the
+/// stored label verbatim ("You"/"Guest" capture source or "Speaker N"), so
+/// source provenance is preserved and no identity is inferred from it.
+/// `text` is the exact line body sent in the flat transcript.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SummarySegment {
+    #[serde(default)]
+    pub start_time: Option<f64>,
+    #[serde(default)]
+    pub end_time: Option<f64>,
+    #[serde(default)]
+    pub speaker: Option<String>,
+    pub text: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProcessTranscriptResponse {
     pub message: String,
@@ -354,6 +373,7 @@ pub async fn api_process_transcript<R: Runtime>(
     template_id: Option<String>,
     summary_language: Option<String>,
     _auth_token: Option<String>,
+    segments: Option<Vec<SummarySegment>>,
 ) -> Result<ProcessTranscriptResponse, String> {
     use uuid::Uuid;
 
@@ -432,6 +452,7 @@ pub async fn api_process_transcript<R: Runtime>(
             final_prompt,
             final_template_id,
             summary_language,
+            segments,
         )
         .await;
     });
@@ -478,5 +499,21 @@ pub async fn api_cancel_summary<R: Runtime>(
             "message": "No active summary generation to cancel",
             "meeting_id": meeting_id,
         }))
+    }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::SummarySegment;
+
+    #[test]
+    fn segments_deserialize_with_optional_fields_missing() {
+        let segs: Vec<SummarySegment> = serde_json::from_str(
+            r#"[{"start_time":1.5,"end_time":3.0,"speaker":"Guest","text":"hi"},{"text":"bare"}]"#,
+        )
+        .unwrap();
+        assert_eq!(segs[0].speaker.as_deref(), Some("Guest"));
+        assert_eq!(segs[0].start_time, Some(1.5));
+        assert_eq!(segs[1], SummarySegment { start_time: None, end_time: None, speaker: None, text: "bare".into() });
     }
 }

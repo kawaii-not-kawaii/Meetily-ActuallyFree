@@ -3,6 +3,7 @@ import { Transcript, Summary } from '@/types';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
+import { buildSummarySegments, type SummarySegment } from '@/lib/summary-segments';
 import { toast } from 'sonner';
 import { isOllamaNotInstalledError } from '@/lib/utils';
 import { BuiltInModelInfo } from '@/lib/builtin-ai';
@@ -286,12 +287,14 @@ export function useSummaryGeneration({
   const processSummary = useCallback(async ({
     transcriptText,
     transcriptTexts,
+    segments,
     customPrompt = '',
     isRegeneration = false,
     requestGeneration: providedRequestGeneration,
   }: {
     transcriptText: string;
     transcriptTexts?: string[];
+    segments?: SummarySegment[];
     customPrompt?: string;
     isRegeneration?: boolean;
     requestGeneration?: number;
@@ -340,6 +343,7 @@ export function useSummaryGeneration({
         customPrompt: customPrompt,
         templateId: selectedTemplate,
         summaryLanguage,
+        segments,
       }) as { process_id?: unknown };
 
       const process_id = result.process_id;
@@ -609,6 +613,7 @@ export function useSummaryGeneration({
         })
         .join('\n'),
       transcriptTexts: allTranscripts.map(textOf),
+      segments: buildSummarySegments(allTranscripts, textOf),
     };
   }, []);
 
