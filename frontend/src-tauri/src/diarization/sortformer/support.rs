@@ -38,10 +38,15 @@ impl ModelConfig {
             }
         }
         log::info!("Nemotron: CPU execution provider");
-        let builder = Session::builder()?.with_intra_threads(4)?;
+        // ort 2.0.0-rc.15: explicit Environment; builder setter errors are not
+        // Send/Sync, so convert through the message for anyhow.
+        let env = crate::onnx_runtime::environment()?;
+        let mut builder = Session::builder(&env)?
+            .with_intra_threads(4)
+            .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?;
         #[cfg(test)]
-        let builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
-            builder.with_profiling(profile)?
+        let mut builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
+            builder.with_profiling(profile).map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
         } else { builder };
         Ok(builder.commit_from_file(path)?)
     }
@@ -49,15 +54,22 @@ impl ModelConfig {
 
 #[cfg(windows)]
 fn directml_session(path: &std::path::Path, device: i32) -> Result<Session> {
-    use ort::execution_providers::DirectMLExecutionProvider;
+    use ort::ep::DirectML as DirectMLExecutionProvider;
     // DirectML requires sequential execution and disabled memory patterns.
-    let builder = Session::builder()?.with_parallel_execution(false)?
-        .with_memory_pattern(false)?
+    // ort 2.0.0-rc.15: explicit Environment; builder setter errors are not
+    // Send/Sync, so convert through the message for anyhow.
+    let env = crate::onnx_runtime::environment()?;
+    let mut builder = Session::builder(&env)?
+        .with_parallel_execution(false)
+        .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
+        .with_memory_pattern(false)
+        .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
         .with_execution_providers([DirectMLExecutionProvider::default()
-            .with_device_id(device).build().error_on_failure()])?;
+            .with_device_id(device).build()])
+        .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?;
     #[cfg(test)]
     let builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
-        builder.with_profiling(profile)?
+        builder.with_profiling(profile).map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
     } else { builder };
     Ok(builder.commit_from_file(path)?)
 }

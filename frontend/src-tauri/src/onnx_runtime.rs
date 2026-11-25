@@ -13,6 +13,11 @@ static RUNTIME_PATH: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLo
 static INITIALIZED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
 #[cfg(windows)]
 static DIRECTML: std::sync::OnceLock<libloading::Library> = std::sync::OnceLock::new();
+// ort 2.0.0-rc.15 requires an explicit Environment per session; sessions keep
+// their own reference, this one carries the app's shared startup configuration.
+// OnceLock (not LazyLock): on Windows it is set from the bundled-runtime path
+// resolved at startup, which is runtime input.
+static ENVIRONMENT: std::sync::OnceLock<Result<ort::environment::Environment, String>> = std::sync::OnceLock::new();
 
 #[cfg(windows)]
 pub fn initialize<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
@@ -65,13 +70,14 @@ fn initialize_library(path: &std::path::Path) -> Result<(), String> {
         .map_err(|error| format!("Cannot load bundled ONNX Runtime: {error}. Repair/reinstall and restart Meetily."))?;
     unsafe { library.get::<unsafe extern "system" fn() -> *const std::ffi::c_void>(b"OrtGetApiBase\0") }
         .map_err(|error| format!("Invalid bundled ONNX Runtime: {error}"))?;
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ort::init_from(path.to_string_lossy().into_owned()).with_telemetry(false).commit()
+    let environment = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ort::init_from(path.to_string_lossy().into_owned())
+            .and_then(|builder| builder.with_telemetry(false).build())
     })).map_err(|_| "ONNX Runtime initialization failed. Repair/reinstall and restart Meetily.".to_string())?
         .map_err(|error| error.to_string())?;
-    if !result {
-        return Err("An ONNX environment was initialized before the bundled runtime. Restart Meetily.".into());
-    }
+    // ort 2.0.0-rc.15 no longer reports whether an environment existed before
+    // the bundled runtime was loaded; the dylib handle itself is process-global.
+    let _ = ENVIRONMENT.set(Ok(environment));
     log::info!("Initialized verified bundled Windows ONNX Runtime");
     Ok(())
 }
@@ -82,6 +88,24 @@ pub async fn check_transcription_runtime() -> Result<(), String> {
     let result = ensure_available().map_err(|error| format!("{START_ERROR_CODE}: {error}"));
     diagnostic.result(&result);
     result
+}
+
+/// The app's shared ort Environment: built from the bundled Windows runtime at
+/// startup, otherwise from the statically linked ONNX Runtime.
+pub fn environment() -> anyhow::Result<ort::environment::Environment> {
+    #[cfg(windows)]
+    ensure_available()?;
+    let stored = ENVIRONMENT.get_or_init(|| {
+        ort::init()
+            .with_telemetry(false)
+            .build()
+            .map_err(|error| error.to_string())
+    });
+    let env = stored.clone().map_err(|error| anyhow::anyhow!("{error}"))?;
+    // ort allows one Environment per process: hand ours to the silero VAD so its
+    // sessions share it instead of building (and colliding with) their own.
+    silero_rs::set_environment(&env);
+    Ok(env)
 }
 
 #[cfg(all(test, windows))]
@@ -115,7 +139,8 @@ mod tests {
     fn bundled_runtime_initialization_is_shared_and_idempotent() {
         ensure_available().unwrap();
         ensure_available().unwrap();
-        assert!(ort::session::Session::builder().is_ok());
+        let env = ort::init().with_telemetry(false).build().unwrap();
+        assert!(ort::session::Session::builder(&env).is_ok());
     }
 
     #[test]

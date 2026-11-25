@@ -1,6 +1,6 @@
 use ndarray::{Array, Array1, Array2, Array3, ArrayD, ArrayViewD, IxDyn};
 use once_cell::sync::Lazy;
-use ort::execution_providers::CPUExecutionProvider;
+use ort::ep::CPU as CPUExecutionProvider;
 use ort::inputs;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
@@ -431,8 +431,8 @@ impl ParakeetModel {
             .map_err(|error| ParakeetError::RuntimeUnavailable(error.to_string()))?;
         #[cfg(windows)]
         let providers = if gpu {
-            use ort::execution_providers::DirectMLExecutionProvider;
-            vec![DirectMLExecutionProvider::default().with_device_id(0).build().error_on_failure()]
+            use ort::ep::DirectML as DirectMLExecutionProvider;
+            vec![DirectMLExecutionProvider::default().with_device_id(0).build()]
         } else {
             vec![CPUExecutionProvider::default().build()]
         };
@@ -442,6 +442,13 @@ impl ParakeetModel {
             vec![CPUExecutionProvider::default().build()]
         };
 
+        let env = crate::onnx_runtime::environment()
+            .map_err(|error| ParakeetError::RuntimeUnavailable(error.to_string()))?;
+        // ort 2.0.0-rc.15: SessionBuilder setters return a non-Send error wrapping
+        // the recoverable builder; keep only the message, as ParakeetError::Ort does.
+        fn builder_error(error: ort::Error<ort::session::builder::SessionBuilder>) -> ParakeetError {
+            ParakeetError::Ort(ort::Error::new(error.message().to_owned()))
+        }
         // Try quantized version first if requested, fallback to regular version
         let model_filename = if try_quantized {
             let quantized_name = format!("{}.int8.onnx", model_name);
@@ -466,34 +473,40 @@ impl ParakeetModel {
             regular_name
         };
 
-        let mut builder = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_execution_providers(providers)?
-            .with_parallel_execution(!gpu)?
-            .with_memory_pattern(!gpu)?;
+        let mut builder = Session::builder(&env)?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(builder_error)?
+            .with_execution_providers(providers)
+            .map_err(builder_error)?
+            .with_parallel_execution(!gpu)
+            .map_err(builder_error)?
+            .with_memory_pattern(!gpu)
+            .map_err(builder_error)?;
 
         if let Some(threads) = intra_threads {
             builder = builder
-                .with_intra_threads(threads)?
-                .with_inter_threads(threads)?;
+                .with_intra_threads(threads)
+                .map_err(builder_error)?
+                .with_inter_threads(threads)
+                .map_err(builder_error)?;
         }
 
         #[cfg(test)]
         if gpu && model_name == "encoder-model" {
             if let Ok(profile) = std::env::var("MEETILY_PARAKEET_PROFILE") {
-                builder = builder.with_profiling(profile)?;
+                builder = builder.with_profiling(profile).map_err(builder_error)?;
             }
         }
 
         let session = builder.commit_from_file(model_dir.as_ref().join(&model_filename))?;
         if gpu { log::info!("Parakeet '{}' encoder uses DirectML device 0", model_filename); }
 
-        for input in &session.inputs {
+        for input in session.inputs() {
             log::info!(
                 "Parakeet Model '{}' input: name={}, type={:?}",
                 model_filename,
-                input.name,
-                input.input_type
+                input.name(),
+                input.dtype()
             );
         }
 
@@ -590,21 +603,21 @@ impl ParakeetModel {
 
     pub fn create_decoder_state(&self) -> Result<DecoderState, ParakeetError> {
         // Get input shapes from decoder model
-        let inputs = &self.decoder_joint.inputs;
+        let inputs = &self.decoder_joint.inputs();
 
         let state1_shape = inputs
             .iter()
-            .find(|input| input.name == "input_states_1")
+            .find(|input| input.name() == "input_states_1")
             .ok_or_else(|| ParakeetError::InputNotFound("input_states_1".to_string()))?
-            .input_type
+            .dtype()
             .tensor_shape()
             .ok_or_else(|| ParakeetError::TensorShape("input_states_1".to_string()))?;
 
         let state2_shape = inputs
             .iter()
-            .find(|input| input.name == "input_states_2")
+            .find(|input| input.name() == "input_states_2")
             .ok_or_else(|| ParakeetError::InputNotFound("input_states_2".to_string()))?
-            .input_type
+            .dtype()
             .tensor_shape()
             .ok_or_else(|| ParakeetError::TensorShape("input_states_2".to_string()))?;
 
