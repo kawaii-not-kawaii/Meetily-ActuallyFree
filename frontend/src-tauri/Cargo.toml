@@ -200,16 +200,17 @@ futures-channel = "0.3.31"
 
 # PERFORMANCE: Enable Metal GPU + CoreML acceleration automatically on macOS
 # CoreML provides additional acceleration for Apple Silicon chips
-whisper-rs = { version = "0.13.2", features = ["raw-api", "metal", "coreml"] }
+whisper-rs = { version = "0.16.0", features = ["raw-api", "metal", "coreml"] }
 
 # Windows-specific dependencies
 # Default: CPU-only build (no BLAS)
 # Users can enable features manually:
 #   --features cuda     (NVIDIA GPUs)
 #   --features vulkan   (AMD/Intel GPUs)
-#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS)
+#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS; since whisper-rs 0.16
+#                       the build stops without it, and the repo cargo config sets the Ubuntu x86_64 path)
 [target.'cfg(target_os = "windows")'.dependencies]
-whisper-rs = { version = "0.13.2", features = ["raw-api"] }
+whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 ort = { version = "2.0.0-rc.10", features = ["load-dynamic"] }
 libloading = "0.8.9"
 futures-channel = "0.3.31"
@@ -220,9 +221,10 @@ futures-channel = "0.3.31"
 #   --features cuda     (NVIDIA GPUs)
 #   --features vulkan   (AMD/Intel GPUs)
 #   --features hipblas  (AMD ROCm)
-#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS)
+#   --features openblas (OpenBLAS optimization, requires BLAS_INCLUDE_DIRS; since whisper-rs 0.16
+#                       the build stops without it, and the repo cargo config sets the Ubuntu x86_64 path)
 [target.'cfg(target_os = "linux")'.dependencies]
-whisper-rs = { version = "0.13.2", features = ["raw-api"] }
+whisper-rs = { version = "0.16.0", features = ["raw-api"] }
 futures-channel = "0.3.31"
 
 [dev-dependencies]

@@ -11,6 +11,7 @@ rustflags = [
 [env]
 MACOSX_DEPLOYMENT_TARGET = { value = "14.2", force = true }
 CMAKE_OSX_DEPLOYMENT_TARGET = "14.2"
+BLAS_INCLUDE_DIRS = "/usr/include/x86_64-linux-gnu/openblas-pthread"
 CMAKE_CUDA_ARCHITECTURES = { value = "75;80;86;89;120", force = true }
 CMAKE_CUDA_STANDARD = { value = "17", force = true }
 CMAKE_CUDA_FLAGS = { value = "--std=c++17 -DCCCL_IGNORE_DEPRECATED_CPP_DIALECT -DCCCL_IGNORE_MSVC_TRADITIONAL_PREPROCESSOR_WARNING -Xcompiler=\"/Zc:preprocessor\"", force = true }
