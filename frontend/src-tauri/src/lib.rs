@@ -749,6 +749,7 @@ pub fn run() {
             ollama::get_ollama_model_context,
             openai::openai::get_openai_models,
             anthropic::anthropic::get_anthropic_models,
+            anthropic::anthropic::get_claude_model_limit,
             groq::groq::get_groq_models,
             api::api_get_meetings,
             api::api_search_transcripts,

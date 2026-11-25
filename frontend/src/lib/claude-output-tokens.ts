@@ -1,38 +1,25 @@
-import limits from './claude-output-limits.json';
-
-// Shared with Rust (include_str! of the same JSON). Conservative fallback for
-// unknown models; these are app budgets, not a promise to use every token a
-// model might support.
+import catalog from './claude-output-limits.json';
 
 /** Suggested Claude models shown when the live model list is unavailable. */
-export const CLAUDE_FALLBACK_MODELS: readonly { id: string; name: string }[] = limits.fallbackModels;
+export const CLAUDE_FALLBACK_MODELS: readonly { id: string; name: string }[] = catalog.fallbackModels;
 
-function matches(name: string, prefix: string) {
-  return name === prefix || name.startsWith(prefix.endsWith('-') ? prefix : `${prefix}-`);
+/** A model's limits as resolved by Rust (`get_claude_model_limit`): live
+ * Models API data, else the bundled catalog, else a conservative fallback. */
+export interface ClaudeLimit {
+  maxOutputTokens: number;
+  maxInputTokens: number | null;
+  source: 'live' | 'catalog' | 'unknown';
 }
 
-/** Catalog output limit before the application clamp. The longest matching
- * prefix wins, so `claude-opus-4-5` is not captured by `claude-opus-4`. */
-export function claudeCatalogLimit(model: string): number {
-  const name = model.toLowerCase();
-  let best: { prefix: string; limit: number } | undefined;
-  for (const entry of limits.models) {
-    if (matches(name, entry.prefix) && (!best || entry.prefix.length > best.prefix.length)) best = entry;
-  }
-  return best?.limit ?? limits.fallbackLimit;
-}
-
-export function claudeOutputBudget(model: string) {
-  const maximum = Math.min(limits.applicationLimit, claudeCatalogLimit(model));
-  return { maximum, defaultTokens: Math.min(limits.defaultTokens, maximum) };
-}
-
-export function parseClaudeOutputTokens(value: string, model: string): number | null {
+/** The user's optional summary cap; null means the model maximum. `limit` is
+ * null while it loads, and the backend still checks the cap on save. */
+export function parseClaudeOutputTokens(value: string, limit: ClaudeLimit | null): number | null {
   const text = value.trim();
   if (!text) return null;
-  const { maximum } = claudeOutputBudget(model);
+  const maximum = limit?.maxOutputTokens ?? Number.MAX_SAFE_INTEGER;
   if (!/^\d+$/.test(text) || !Number.isSafeInteger(Number(text)) || Number(text) < 1 || Number(text) > maximum) {
-    throw new Error(`Maximum summary length must be a whole number between 1 and ${maximum.toLocaleString()}, or left empty.`);
+    const range = limit ? `between 1 and ${maximum.toLocaleString('en-US')}` : 'of at least 1';
+    throw new Error(`Maximum summary length must be a whole number ${range}, or left empty.`);
   }
   return Number(text);
 }

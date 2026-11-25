@@ -1,7 +1,5 @@
 {
-  "defaultTokens": 8192,
   "fallbackLimit": 8192,
-  "applicationLimit": 64000,
   "models": [
     { "prefix": "claude-3-opus", "limit": 4096 },
     { "prefix": "claude-3-sonnet", "limit": 4096 },

@@ -479,13 +479,10 @@ impl SummaryService {
                     return;
                 }
             };
-            match super::llm_client::claude_max_tokens(&model_name, configured) {
-                Ok(value) => Some(value),
-                Err(error) => {
-                    Self::update_process_failed(&pool, &meeting_id, &error).await;
-                    return;
-                }
-            }
+            Some(
+                crate::anthropic::anthropic::claude_summary_max_tokens(&final_api_key, &model_name, configured)
+                    .await,
+            )
         } else if provider == LLMProvider::CustomOpenAI {
             custom_openai_max_tokens
         } else {
@@ -1070,6 +1067,26 @@ mod tests {
             extract_cached_english_markdown(&raw, &changed_template, Some("de")).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn claude_summary_cached_under_the_old_default_regenerates_once() {
+        // The cache key carries the effective output length, which for an
+        // unset cap moved from the 8192 app default to the model maximum.
+        let source_for = |cap: Option<i64>| {
+            let limit = crate::summary::claude_limits::resolve_claude_limit("claude-sonnet-5-5", None);
+            let max_tokens = crate::summary::claude_limits::effective_max_tokens(&limit, cap);
+            SummaryCacheSource { max_tokens: Some(max_tokens), ..sample_cache_source() }
+        };
+        let old = SummaryCacheSource { max_tokens: Some(8192), ..sample_cache_source() };
+        let current = source_for(None);
+        let lookup = |raw: &str| extract_cached_english_markdown(raw, &current, Some("de")).unwrap();
+        let saved = |source| build_summary_result_json("# R\nBonjour", "# M\nHello", source, Some("fr")).to_string();
+
+        assert_eq!(lookup(&saved(old)), None);
+        assert!(lookup(&saved(current.clone())).is_some());
+        // An explicit cap that is unchanged by the new default keeps its cache.
+        assert_eq!(source_for(Some(8192)).max_tokens, Some(8192));
     }
 
     #[test]
