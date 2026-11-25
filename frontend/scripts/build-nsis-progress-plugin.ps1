@@ -22,7 +22,7 @@ foreach ($required in @($ProgressMainBinary, $source, $vcvars)) {
 }
 if (-not (Test-Path -LiteralPath $nsis)) {
   $archive = Join-Path $repo ".build-tools\nsis-3.11.zip"
-  $download = "https://github.com/NSIS-Dev/nsis/releases/download/v3.11/nsis-3.11.zip"
+  $download = "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip"
   New-Item -ItemType Directory -Force -Path (Split-Path $archive -Parent) | Out-Null
   Invoke-WebRequest -Uri $download -OutFile $archive
   Expand-Archive -LiteralPath $archive -DestinationPath (Split-Path $nsis -Parent) -Force

@@ -401,6 +401,17 @@ jobs:
           echo "Copied llama-helper to frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}${EXT}"
           ls -la frontend/src-tauri/binaries/
 
+      # The NSIS plugin step below runs `cargo build -p meetily`, whose
+      # tauri::generate_context! requires frontendDist (../out) to exist, so
+      # produce the Next.js export first. build-universal-windows.ps1 does the
+      # same before building the plugin. The Tauri step rebuilds the frontend
+      # via beforeBuildCommand; that second build is acceptable.
+      - name: Build frontend for NSIS plugin build
+        if: contains(matrix.platform, 'windows')
+        run: |
+          cd frontend
+          pnpm run build
+
       - name: Build Windows NSIS overall-progress plugin
         if: contains(matrix.platform, 'windows')
         shell: pwsh
@@ -409,6 +420,7 @@ jobs:
           $profile = if ($profileFlag) { "release" } else { "debug" }
           cargo build $profileFlag -p meetily --bin meetily --no-default-features --features vulkan,custom-protocol
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           & "frontend/scripts/build-nsis-progress-plugin.ps1" -ProgressMainBinary "target/$profile/meetily.exe"
 
       # Build step (with code signing)
@@ -432,7 +444,7 @@ jobs:
           MEETILY_RSA_PUBLIC_KEY: ${{ secrets.MEETILY_RSA_PUBLIC_KEY }}
           # Supabase configuration (for online license verification)
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          TAURI_GPU_FEATURE: ${{ contains(matrix.platform, 'macos') && 'none' || '' }}
         with:
           projectPath: frontend
           args: ${{ matrix.args }} ${{ steps.build-features.outputs.features }} ${{ steps.windows-portability.outputs.args }}
@@ -443,7 +455,14 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tauri updater signing (ALWAYS enabled for .sig files)
+          # frontend/scripts/tauri-auto.js moves every argument after `--`
+          # when it detects a GPU feature, which turns --target into a cargo
+          # flag: the binary lands in target/<triple>/release while the Tauri
+          # bundler looks in target/release ("can't open main binary"). macOS
+          # needs no extra feature (Metal/CoreML are on by default in the Rust
+          # crate), so pin the detection to CPU-only to keep --target with the
+          # Tauri CLI.
+          TAURI_GPU_FEATURE: ${{ contains(matrix.platform, 'macos') && 'none' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # License validation RSA public key (embedded at build time)
