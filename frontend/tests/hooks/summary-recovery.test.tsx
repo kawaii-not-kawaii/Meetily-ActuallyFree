@@ -10,6 +10,7 @@ let polls: Array<{ meeting: string; owner: string; callback: (result: any) => vo
 let stopped: Array<[string,string?]>;
 let toasts: any[];
 let cancelFails = false;
+let progressListener: ((event: { payload: any }) => void) | undefined;
 const startPolling = (meeting: string, owner: string, callback: (result:any)=>void) => { polls.push({meeting,owner,callback}); };
 const stopPolling = (meeting:string,owner?:string) => { stopped.push([meeting,owner]); };
 mock.module('@/components/Sidebar/SidebarProvider', () => ({useSidebar:()=>({startSummaryPolling:startPolling, stopSummaryPolling:stopPolling})}));
@@ -19,7 +20,7 @@ mock.module('@tauri-apps/api/core', () => ({ invoke: async (command:string,args:
   if (command==='api_cancel_summary') { if (cancelFails) throw new Error('IPC failed'); return {}; }
   throw new Error(`unexpected ${command}`);
 }}));
-mock.module('@tauri-apps/api/event', () => ({listen:async()=>()=>{}}));
+mock.module('@tauri-apps/api/event', () => ({listen:async(_name:string,handler:(event:{payload:any})=>void)=>{progressListener=handler;return ()=>{};}}));
 mock.module('sonner', () => ({toast:{success:(...a:any[])=>toasts.push(a),error:(...a:any[])=>toasts.push(a),info:()=>{},warning:()=>{}}}));
 const {useSummaryGeneration} = await import('../../src/hooks/meeting-details/useSummaryGeneration');
 let current: ReturnType<typeof useSummaryGeneration>;
@@ -78,4 +79,22 @@ test('a failed cancellation is not reported as a successful stop',async()=>{
  await act(async()=>{await current.handleStopGeneration();});
  expect(current.summaryStatus).toBe('error');expect(current.summaryError).toContain('Could not cancel');
  expect(stopped).toHaveLength(0);
+});
+
+test('retry progress replaces the status message until the retried request resumes',async()=>{
+ response={meeting_id:'a',status:'pending',start:'run-a',data:null};await mount();
+ await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0));});
+ const emit=async(stage:string,message?:string,processId=polls[0].owner)=>{await act(async()=>{progressListener!({payload:{meetingId:'a',processId,stage,message}});});};
+ const shown=()=>current.getSummaryStatusMessage(current.summaryStatus);
+ await emit('retrying','Claude is temporarily unavailable, retrying (2 of 3)…');
+ expect(shown()).toBe('Claude is temporarily unavailable, retrying (2 of 3)…');
+ // A late poll of the still-pending run keeps the notice.
+ await act(async()=>{polls[0].callback({status:'pending',data:null});});
+ expect(shown()).toContain('retrying (2 of 3)');
+ await emit('retrying','retrying (3 of 3)','another-run');expect(shown()).toContain('(2 of 3)');
+ await emit('generating','Generating summary…');
+ expect(shown()).toBe('Generating summary...');
+ await emit('retrying','retrying (1 of 3)');
+ await emit('error','LLM API request failed');
+ expect(current.summaryStatus).toBe('error');expect(shown()).toBe('Error generating summary');
 });

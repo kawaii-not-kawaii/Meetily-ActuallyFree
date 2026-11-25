@@ -5,6 +5,7 @@
 //! timeout bounds the silence between received bytes. Anthropic sends periodic
 //! `ping` events, so any bytes (including pings) reset the idle clock.
 //! Cancellation drops the response, which closes the connection.
+//! Transient failures are retried by [`stream_message_with_retry`].
 
 use futures_util::StreamExt;
 use reqwest::{header::HeaderMap, Client};
@@ -12,6 +13,9 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+mod retry;
+pub use retry::{observe_retries, stream_message_with_retry, RetryEvent, RetryPolicy};
 
 pub const CLAUDE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub const CLAUDE_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -52,7 +56,7 @@ pub enum ClaudeStreamError {
     Cancelled,
     IdleTimeout(Duration),
     Connect(String),
-    Http { status: u16, body: String },
+    Http { status: u16, body: String, retry_after: Option<Duration> },
     /// An `error` event received mid-stream.
     Stream { error_type: String, message: String },
     Malformed(String),
@@ -67,7 +71,7 @@ impl std::fmt::Display for ClaudeStreamError {
                 "Claude stopped responding: no data received for {} seconds (idle timeout)",
                 d.as_secs()
             ),
-            Self::Connect(e) => write!(f, "Failed to send request to LLM: {e}"),
+            Self::Connect(e) => write!(f, "Connection to Claude failed: {e}"),
             Self::Http { body, .. } => write!(f, "LLM API request failed: {body}"),
             Self::Stream { error_type, message } => {
                 write!(f, "Claude stream error ({error_type}): {message}")
@@ -153,18 +157,42 @@ fn apply_event(result: &mut ClaudeStreamResult, payload: &str) -> Result<bool, C
     Ok(false)
 }
 
-/// Sends `body` (with `stream: true` forced) and accumulates the response.
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
+/// `retry-after` in seconds, the form the API sends.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    let seconds = header_str(headers, "retry-after")?.trim().parse().ok()?;
+    Duration::try_from_secs_f64(seconds).ok()
+}
+
+/// One attempt: sends `body` (with `stream: true` forced) and accumulates the
+/// response.
 pub async fn stream_message(
+    client: &Client,
+    url: &str,
+    headers: HeaderMap,
+    body: Value,
+    idle_timeout: Duration,
+    cancel: Option<&CancellationToken>,
+) -> Result<ClaudeStreamResult, ClaudeStreamError> {
+    let never = CancellationToken::new();
+    let cancel = cancel.unwrap_or(&never);
+    stream_attempt(client, url, headers, body, idle_timeout, cancel, || {}).await
+}
+
+/// `on_accepted` runs once the API has answered with a success status.
+async fn stream_attempt(
     client: &Client,
     url: &str,
     headers: HeaderMap,
     mut body: Value,
     idle_timeout: Duration,
-    cancel: Option<&CancellationToken>,
+    cancel: &CancellationToken,
+    on_accepted: impl FnOnce(),
 ) -> Result<ClaudeStreamResult, ClaudeStreamError> {
     body["stream"] = Value::Bool(true);
-    let never = CancellationToken::new();
-    let cancel = cancel.unwrap_or(&never);
 
     let send = client.post(url).headers(headers).json(&body).send();
     let response = tokio::select! {
@@ -177,11 +205,23 @@ pub async fn stream_message(
         },
     };
 
+    let status = response.status().as_u16();
+    // For diagnosis with Anthropic support; carries no request content.
+    let request_id = header_str(response.headers(), "request-id").unwrap_or("none");
+    tracing::info!("Claude response: status={status} request_id={request_id}");
+
     if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let body = response.text().await.unwrap_or_else(|_| "Unknown error".into());
-        return Err(ClaudeStreamError::Http { status, body });
+        let retry_after = retry_after(response.headers());
+        let body = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(ClaudeStreamError::Cancelled),
+            b = tokio::time::timeout(idle_timeout, response.text()) => {
+                b.ok().and_then(Result::ok).unwrap_or_else(|| "Unknown error".into())
+            }
+        };
+        return Err(ClaudeStreamError::Http { status, body, retry_after });
     }
+    on_accepted();
 
     let mut stream = response.bytes_stream();
     let mut parser = SseParser::default();
@@ -203,6 +243,13 @@ pub async fn stream_message(
                 return Ok(result);
             }
         }
+    }
+    // EOF without `message_stop`. With a stop reason the message is complete;
+    // without one the connection was cut off mid-response.
+    if result.stop_reason.is_none() {
+        return Err(ClaudeStreamError::Connect(
+            "the response stream ended before Claude finished".into(),
+        ));
     }
     Ok(result)
 }

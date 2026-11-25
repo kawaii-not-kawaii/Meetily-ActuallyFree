@@ -102,6 +102,8 @@ export function useSummaryGeneration({
 }: UseSummaryGenerationProps) {
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus>('idle');
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  // Set while the backend waits on or re-sends a failed model request.
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
 
   const { startSummaryPolling, stopSummaryPolling } = useSidebar();
   const completionHandledRef = useRef(false);
@@ -124,6 +126,7 @@ export function useSummaryGeneration({
   useEffect(() => {
     summaryRequestGenerationRef.current += 1;
     completionHandledRef.current = false;
+    setRetryMessage(null);
     let disposed = false;
     let unlisten: (() => void) | undefined;
     (async () => {
@@ -140,6 +143,12 @@ export function useSummaryGeneration({
           if (activeMeetingIdRef.current !== meeting.id) return;
           if (meetingId && meetingId !== meeting.id) return;
           if (!processId || processId !== activeProcessIdRef.current) return;
+
+          if (stage === 'retrying') {
+            setRetryMessage(message ?? 'Retrying…');
+            return;
+          }
+          setRetryMessage(null);
 
           if (stage === 'preparing' || stage === 'generating') {
             setSummaryStatus((prev) =>
@@ -267,6 +276,9 @@ export function useSummaryGeneration({
 
   // Helper to get status message
   const getSummaryStatusMessage = useCallback((status: SummaryStatus) => {
+    if (retryMessage && (status === 'processing' || status === 'summarizing' || status === 'regenerating')) {
+      return retryMessage;
+    }
     switch (status) {
       case 'processing':
         return 'Processing transcript...';
@@ -281,7 +293,7 @@ export function useSummaryGeneration({
       default:
         return '';
     }
-  }, []);
+  }, [retryMessage]);
 
   // Unified summary processing logic
   const processSummary = useCallback(async ({
@@ -310,6 +322,7 @@ export function useSummaryGeneration({
     activeProcessIdRef.current = null;
     setSummaryStatus(isRegeneration ? 'regenerating' : 'processing');
     setSummaryError(null);
+    setRetryMessage(null);
     let backendAccepted = false;
 
     try {

@@ -613,7 +613,24 @@ impl SummaryService {
         );
 
         let client = crate::summary::claude_stream::shared_http_client();
-        let result = generate_meeting_summary(
+        // Claude retries inside any pass (summary, translation) surface as progress.
+        let retry_observer = {
+            let (app, meeting_id, process_id) = (app.clone(), meeting_id.clone(), process_id.clone());
+            std::sync::Arc::new(move |event: crate::summary::claude_stream::RetryEvent| {
+                let (stage, message) = event.progress();
+                let _ = app.emit(
+                    "summary-progress",
+                    serde_json::json!({
+                        "meetingId": meeting_id,
+                        "processId": process_id,
+                        "stage": stage,
+                        "message": message,
+                        "data": null,
+                    }),
+                );
+            })
+        };
+        let generation = generate_meeting_summary(
             client,
             &provider,
             &model_name,
@@ -634,8 +651,8 @@ impl SummaryService {
             summary_language.as_deref(),
             detected_summary_language.as_deref(),
             cached_english.as_deref(),
-        )
-        .await;
+        );
+        let result = crate::summary::claude_stream::observe_retries(retry_observer, generation).await;
 
         let duration = start_time.elapsed().as_secs_f64();
 

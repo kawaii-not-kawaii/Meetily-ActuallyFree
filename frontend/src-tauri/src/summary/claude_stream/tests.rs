@@ -4,52 +4,58 @@ use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-enum Step {
+pub(super) enum Step {
     Write(String),
     Sleep(u64),
 }
 
-struct Fake {
-    url: String,
-    requests: Arc<Mutex<Vec<String>>>,
+pub(super) struct Fake {
+    pub(super) url: String,
+    pub(super) requests: Arc<Mutex<Vec<String>>>,
 }
 
-fn sse(event: &str, data: Value) -> Step {
+pub(super) fn sse(event: &str, data: Value) -> Step {
     Step::Write(format!("event: {event}\ndata: {data}\n\n"))
 }
 
-fn ok_head() -> Step {
+pub(super) fn ok_head() -> Step {
     Step::Write("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n".into())
 }
 
-fn text_delta(t: &str) -> Step {
+pub(super) fn text_delta(t: &str) -> Step {
     sse("content_block_delta", serde_json::json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":t}}))
 }
 
-fn finish(reason: &str) -> Vec<Step> {
+pub(super) fn finish(reason: &str) -> Vec<Step> {
     vec![
         sse("message_delta", serde_json::json!({"type":"message_delta","delta":{"stop_reason":reason},"usage":{"output_tokens":12}})),
         sse("message_stop", serde_json::json!({"type":"message_stop"})),
     ]
 }
 
-fn start() -> Step {
+pub(super) fn start() -> Step {
     sse("message_start", serde_json::json!({"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":40,"cache_creation_input_tokens":5,"output_tokens":1}}}))
 }
 
 /// Serves one scripted response per connection (script is replayed for every
 /// connection; the socket closes after the last step unless the last step is a
 /// long sleep).
-async fn serve(script: Vec<Step>) -> Fake {
+pub(super) async fn serve(script: Vec<Step>) -> Fake {
+    serve_sequence(vec![script]).await
+}
+
+/// Like `serve`, but the nth connection gets the nth script; the last script
+/// repeats for any further connection.
+pub(super) async fn serve_sequence(scripts: Vec<Vec<Step>>) -> Fake {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
     let requests = Arc::new(Mutex::new(Vec::new()));
     let reqs = requests.clone();
-    let script = Arc::new(script);
+    let scripts: Vec<Arc<Vec<Step>>> = scripts.into_iter().map(Arc::new).collect();
     tokio::spawn(async move {
-        loop {
+        for n in 0.. {
             let Ok((mut sock, _)) = listener.accept().await else { return };
-            let script = script.clone();
+            let script = scripts[usize::min(n, scripts.len() - 1)].clone();
             let reqs = reqs.clone();
             tokio::spawn(async move {
                 let mut buf = Vec::new();
@@ -169,7 +175,7 @@ async fn http_error_surfaces_body() {
     let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}"#;
     let fake = serve(vec![Step::Write(format!("HTTP/1.1 400 Bad Request\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len()))]).await;
     match run(&fake, 2000, None).await.unwrap_err() {
-        ClaudeStreamError::Http { status, body } => { assert_eq!(status, 400); assert!(body.contains("bad")); }
+        ClaudeStreamError::Http { status, body, .. } => { assert_eq!(status, 400); assert!(body.contains("bad")); }
         other => panic!("{other:?}"),
     }
 }
@@ -191,7 +197,7 @@ async fn stop_reasons_policy() {
     }
     // Missing stop reason (stream ended early) never succeeds.
     let fake = serve(vec![ok_head(), start(), text_delta("partial")]).await;
-    assert!(complete_text(run(&fake, 2000, None).await.unwrap()).is_err());
+    assert!(matches!(run(&fake, 2000, None).await, Err(ClaudeStreamError::Connect(_))));
 }
 
 #[test]
