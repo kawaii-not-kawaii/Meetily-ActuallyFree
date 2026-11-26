@@ -177,7 +177,7 @@ source labels rather than guessing a speaker or switching engines.
 
 Summary-generated title ownership, placeholder rejection and completion refresh
 are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
-Claude summary streaming (SSE, idle timeout, shared HTTP client) is documented in
+Claude summary streaming (SSE, idle timeout, retries, shared HTTP client) is documented in
 [CLAUDE_STREAMING.md](CLAUDE_STREAMING.md).
 
 Summary entry point: `api_process_transcript` takes the flat `text` (model input

@@ -362,8 +362,8 @@ pub async fn generate_summary(
 
 const CLAUDE_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 
-/// One streamed Claude request. `url` is a parameter so tests can aim it at a
-/// local fake SSE server.
+/// One streamed Claude request, retried on transient failures. `url` is a
+/// parameter so tests can aim it at a local fake SSE server.
 pub(crate) async fn generate_claude(
     client: &Client,
     url: &str,
@@ -387,8 +387,9 @@ pub(crate) async fn generate_claude(
     });
 
     info!("🐞 LLM Request to Claude: model={}", model_name);
-    let result = claude_stream::stream_message(
+    let result = claude_stream::stream_message_with_retry(
         client, url, headers, body, claude_stream::CLAUDE_IDLE_TIMEOUT, cancellation_token,
+        claude_stream::RetryPolicy::default(),
     )
     .await
     .map_err(|e| e.to_string())?;
