@@ -432,7 +432,9 @@ impl ParakeetModel {
         #[cfg(windows)]
         let providers = if gpu {
             use ort::ep::DirectML as DirectMLExecutionProvider;
-            vec![DirectMLExecutionProvider::default().with_device_id(0).build()]
+            // A failed DirectML registration must fail session creation, not
+            // silently fall back to CPU while the app reports DirectML active.
+            vec![DirectMLExecutionProvider::default().with_device_id(0).build().error_on_failure()]
         } else {
             vec![CPUExecutionProvider::default().build()]
         };

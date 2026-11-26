@@ -139,7 +139,9 @@ mod tests {
     fn bundled_runtime_initialization_is_shared_and_idempotent() {
         ensure_available().unwrap();
         ensure_available().unwrap();
-        let env = ort::init().with_telemetry(false).build().unwrap();
+        // ort 2.0.0-rc.15 allows one Environment per process: a second
+        // ort::init().build() here would error, so reuse the app's shared one.
+        let env = environment().unwrap();
         assert!(ort::session::Session::builder(&env).is_ok());
     }
 
