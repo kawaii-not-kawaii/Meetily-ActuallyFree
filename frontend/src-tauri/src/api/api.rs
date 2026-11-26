@@ -689,9 +689,18 @@ pub async fn api_save_model_config<R: Runtime>(
     let pool = state.db_manager.pool();
 
     if provider.eq_ignore_ascii_case("claude") {
-        crate::summary::llm_client::claude_max_tokens(&model, summary_max_tokens)?;
-    } else if summary_max_tokens.is_some_and(|tokens| tokens < 1 || tokens > 64000) {
-        return Err("Maximum summary length must be between 1 and 64000, or left empty".into());
+        // Validate against the live limit, using the key being saved if any.
+        let key = match api_key.clone().filter(|key| !key.trim().is_empty()) {
+            Some(key) => Some(key),
+            None => SettingsRepository::get_api_key(pool, "claude")
+                .await
+                .map_err(|e| e.to_string())?,
+        };
+        crate::anthropic::anthropic::validate_claude_summary_cap(key.as_deref(), &model, summary_max_tokens)
+            .await?;
+    } else if summary_max_tokens.is_some_and(|tokens| tokens < 1) {
+        // Only Claude uses this field, so other providers get no upper bound.
+        return Err("Maximum summary length must be at least 1, or left empty".into());
     }
 
     if let Err(e) = SettingsRepository::save_model_config(

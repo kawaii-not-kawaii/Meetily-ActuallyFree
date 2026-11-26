@@ -565,21 +565,14 @@ refetches the saved live rows and unblocks the sequence instead of trapping the
 user in a retry loop. Those rows are summarized only when Auto Summary is
 enabled or the user generates a summary manually.
 
-Claude summary output uses the optional `summaryMaxTokens` setting and a shared
-Rust/UI catalog in `src/lib/claude-output-limits.json`. The application default
-is 8,192 tokens (4,096 for original Claude 3), not the model's maximum. Explicit
-values must be positive integers within the catalog/application limit. Resolve
-the effective default before cache fingerprinting; do not let this setting leak
-into Custom Server or other providers. Claude responses must report a completed
-stop reason; `max_tokens`, refusal, or missing completion must fail before an
-incomplete summary is persisted or cached.
-
-The same JSON holds the model-prefix limits and the single list of suggested
-fallback models (`fallbackModels`), read by Rust (`claude_catalog_limit`,
-`claude_fallback_models`) and TypeScript (`claudeCatalogLimit`,
-`CLAUDE_FALLBACK_MODELS`), so the two sides cannot diverge. Prefix matching is
-longest-prefix-wins. The 64,000 application clamp still applies on top of the
-catalog limit until streaming lands.
+Claude summary length defaults to the selected model's maximum output;
+`settings.summaryMaxTokens` is an optional user cap and does not leak into
+Custom Server or other providers. Resolve the effective value before cache
+fingerprinting. Claude responses must report a completed stop reason;
+`max_tokens`, refusal, or missing completion must fail before an incomplete
+summary is persisted or cached. Limit resolution (live Models API, bundled
+catalog fallback, save-time check and use-time clamp) is documented in
+[docs/CLAUDE_MODEL_LIMITS.md](docs/CLAUDE_MODEL_LIMITS.md).
 
 Summary prompts serialize every persisted transcript row with timestamp,
 speaker label, and text. This is required for a regeneration after speaker

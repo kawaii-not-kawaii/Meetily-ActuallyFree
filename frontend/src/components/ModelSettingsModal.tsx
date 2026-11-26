@@ -38,7 +38,8 @@ import {
   listClaudeCliModels,
 } from '@/lib/claude-cli';
 import { toast } from 'sonner';
-import { CLAUDE_FALLBACK_MODELS, claudeOutputBudget, parseClaudeOutputTokens } from '@/lib/claude-output-tokens';
+import { CLAUDE_FALLBACK_MODELS, parseClaudeOutputTokens } from '@/lib/claude-output-tokens';
+import { ClaudeSummaryLengthField, useClaudeModelLimit } from '@/components/ClaudeSummaryLengthField';
 
 export interface ModelConfig {
   provider: 'ollama' | 'groq' | 'claude' | 'claude-cli' | 'openai' | 'openrouter' | 'builtin-ai' | 'custom-openai';
@@ -167,6 +168,7 @@ export function ModelSettingsModal({
   const [summaryMaxTokens, setSummaryMaxTokens] = useState<string>(
     modelConfig.summaryMaxTokens?.toString() || ''
   );
+  const claudeLimit = useClaudeModelLimit(modelConfig.model, apiKey, modelConfig.provider === 'claude');
   // Claude Code CLI state
   const [claudeCliPath, setClaudeCliPath] = useState<string>(modelConfig.claudeCliPath || '');
   const [claudeCliModels, setClaudeCliModels] = useState<string[]>(CLAUDE_CLI_FALLBACK_MODELS);
@@ -673,7 +675,7 @@ export function ModelSettingsModal({
     let outputTokens = modelConfig.summaryMaxTokens ?? null;
     if (modelConfig.provider === 'claude') {
       try {
-        outputTokens = parseClaudeOutputTokens(summaryMaxTokens, modelConfig.model);
+        outputTokens = parseClaudeOutputTokens(summaryMaxTokens, claudeLimit);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : String(error));
         return;
@@ -1194,25 +1196,11 @@ export function ModelSettingsModal({
             where this value always has an effect. Everything else either has its
             own field (Custom Server) or uses its own default. */}
         {modelConfig.provider === 'claude' && (
-          <div>
-            <Label htmlFor="summary-max-tokens">Maximum summary length (optional)</Label>
-            <Input
-              id="summary-max-tokens"
-              type="number"
-              min="1"
-              max={claudeOutputBudget(modelConfig.model).maximum}
-              step="1"
-              value={summaryMaxTokens}
-              onChange={(e) => setSummaryMaxTokens(e.target.value)}
-              placeholder={String(claudeOutputBudget(modelConfig.model).defaultTokens)}
-              className="mt-1"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Leave empty for the app default of {claudeOutputBudget(modelConfig.model).defaultTokens.toLocaleString()} output tokens.
-              You can choose up to {claudeOutputBudget(modelConfig.model).maximum.toLocaleString()} for this model.
-              A higher limit allows longer summaries and may increase API usage. Incomplete responses are reported as errors.
-            </p>
-          </div>
+          <ClaudeSummaryLengthField
+            limit={claudeLimit}
+            value={summaryMaxTokens}
+            onChange={setSummaryMaxTokens}
+          />
         )}
 
         {modelConfig.provider === 'ollama' && (

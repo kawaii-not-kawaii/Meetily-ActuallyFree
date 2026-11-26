@@ -179,6 +179,8 @@ Summary-generated title ownership, placeholder rejection and completion refresh
 are documented in [SUMMARY_GENERATED_TITLES.md](SUMMARY_GENERATED_TITLES.md).
 Claude summary streaming (SSE, idle timeout, retries, shared HTTP client) is documented in
 [CLAUDE_STREAMING.md](CLAUDE_STREAMING.md).
+Claude model limits, the default summary length and the user cap are documented
+in [CLAUDE_MODEL_LIMITS.md](CLAUDE_MODEL_LIMITS.md).
 
 Summary entry point: `api_process_transcript` takes the flat `text` (model input
 and cache source, unchanged) plus optional `segments` (`SummarySegment`: start/end

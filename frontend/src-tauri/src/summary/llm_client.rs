@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::claude_stream;
+use super::{claude_limits, claude_stream};
 
 const REQUEST_TIMEOUT_DURATION: Duration = Duration::from_secs(300);
 
@@ -43,62 +43,6 @@ pub struct Choice {
 #[derive(Deserialize, Debug)]
 pub struct MessageContent {
     pub content: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeOutputLimits {
-    default_tokens: u32,
-    fallback_limit: u32,
-    application_limit: u32,
-    models: Vec<ClaudeModelLimit>,
-    fallback_models: Vec<ClaudeFallbackModel>,
-}
-
-#[derive(Deserialize)]
-pub struct ClaudeFallbackModel {
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Deserialize)]
-struct ClaudeModelLimit {
-    prefix: String,
-    limit: u32,
-}
-
-// One versioned catalog serves the settings UI and request validation. Limits
-// are conservative application budgets, not the model's advertised maximum.
-static CLAUDE_OUTPUT_LIMITS: std::sync::LazyLock<ClaudeOutputLimits> = std::sync::LazyLock::new(|| {
-    serde_json::from_str(include_str!("../../../src/lib/claude-output-limits.json"))
-        .expect("bundled Claude output limits must be valid")
-});
-
-/// Suggested Claude models used when the live model list is unavailable. The
-/// same JSON feeds the TypeScript settings UI.
-pub fn claude_fallback_models() -> &'static [ClaudeFallbackModel] {
-    &CLAUDE_OUTPUT_LIMITS.fallback_models
-}
-
-/// Catalog output limit before the application clamp. The longest matching
-/// prefix wins, so `claude-opus-4-5` is not captured by `claude-opus-4`.
-pub fn claude_catalog_limit(model_name: &str) -> u32 {
-    let limits = &*CLAUDE_OUTPUT_LIMITS;
-    let model = model_name.to_lowercase();
-    limits.models.iter().filter(|entry| {
-        model == entry.prefix || model.starts_with(&format!("{}{}", entry.prefix,
-            if entry.prefix.ends_with('-') { "" } else { "-" }))
-    }).max_by_key(|entry| entry.prefix.len()).map(|entry| entry.limit).unwrap_or(limits.fallback_limit)
-}
-
-pub fn claude_max_tokens(model_name: &str, configured: Option<i64>) -> Result<u32, String> {
-    let limits = &*CLAUDE_OUTPUT_LIMITS;
-    let maximum = limits.application_limit.min(claude_catalog_limit(model_name));
-    match configured {
-        None => Ok(limits.default_tokens.min(maximum)),
-        Some(value) if value > 0 && value <= i64::from(maximum) => Ok(value as u32),
-        Some(_) => Err(format!("Maximum Claude summary length must be between 1 and {maximum} tokens for {model_name}, or left empty.")),
-    }
 }
 
 // Claude-specific request structure
@@ -382,7 +326,10 @@ pub(crate) async fn generate_claude(
     let body = serde_json::json!(ClaudeRequest {
         system: system_prompt.to_string(),
         model: model_name.to_string(),
-        max_tokens: claude_max_tokens(model_name, max_tokens.map(i64::from))?,
+        // The summary service has already resolved the live limit and clamped
+        // the user's cap; the catalog only covers callers that pass no value.
+        max_tokens: max_tokens
+            .unwrap_or_else(|| claude_limits::resolve_claude_limit(model_name, None).max_output_tokens),
         messages: vec![ChatMessage { role: "user".to_string(), content: user_prompt.to_string() }],
     });
 
@@ -413,45 +360,6 @@ fn provider_name(provider: &LLMProvider) -> &str {
 
 #[cfg(test)]
 mod claude_output_tests {
-    use super::*;
-
-    #[test]
-    fn catalog_resolves_every_model_to_its_limit_by_longest_prefix() {
-        let cases: &[(&str, u32)] = &[
-            ("claude-3-opus-20240229", 4096), ("claude-3-5-sonnet-latest", 8192), ("claude-3-7-sonnet-latest", 64000),
-            ("claude-sonnet-4-20250514", 64000), ("claude-sonnet-4-5-20250929", 64000), ("claude-sonnet-4-6", 128000),
-            ("claude-sonnet-5", 128000), ("claude-sonnet-5-5", 128000),
-            ("claude-haiku-4-5-20251001", 64000), ("claude-haiku-5", 128000), ("claude-haiku-5-5", 128000),
-            ("claude-opus-4-1-20250805", 32000), ("claude-opus-4-20250514", 32000), ("claude-opus-4-5-20251101", 64000),
-            ("claude-opus-4-6", 128000), ("claude-opus-4-7", 128000), ("claude-opus-4-8", 128000),
-            ("claude-opus-5", 128000), ("claude-opus-5-5", 128000),
-            ("claude-fable-5-2", 128000), ("claude-mythos-5-2", 128000), ("claude-unknown", 8192),
-        ];
-        for (model, limit) in cases {
-            assert_eq!(claude_catalog_limit(model), *limit, "{model}");
-        }
-    }
-
-    #[test]
-    fn fallback_models_have_no_retired_entries() {
-        let ids: Vec<&str> = claude_fallback_models().iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "claude-haiku-4-5"]);
-    }
-
-    #[test]
-    fn validates_budget_without_confusing_model_generations() {
-        assert_eq!(claude_max_tokens("claude-3-opus", None).unwrap(), 4096);
-        assert_eq!(claude_max_tokens("claude-3-5-sonnet-latest", None).unwrap(), 8192);
-        assert_eq!(claude_max_tokens("claude-sonnet-4-5", None).unwrap(), 8192);
-        assert_eq!(claude_max_tokens("claude-sonnet-4-5", Some(32000)).unwrap(), 32000);
-        assert_eq!(claude_max_tokens("claude-sonnet-4-50-unknown", None).unwrap(), 8192);
-        assert!(claude_max_tokens("claude-3-opus", Some(8192)).is_err());
-        for value in [0, -1, 64001, i64::MAX] {
-            assert!(claude_max_tokens("claude-sonnet-4-5", Some(value)).is_err());
-        }
-        assert!(claude_max_tokens("claude-unknown", Some(9000)).is_err());
-    }
-
     #[tokio::test]
     async fn summary_output_setting_round_trips_and_clears() {
         use crate::database::repositories::setting::SettingsRepository;
