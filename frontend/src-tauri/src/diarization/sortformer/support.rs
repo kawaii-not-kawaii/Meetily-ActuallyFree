@@ -68,7 +68,7 @@ fn directml_session(path: &std::path::Path, device: i32) -> Result<Session> {
             .with_device_id(device).build().error_on_failure()])
         .map_err(|e| anyhow::anyhow!(e.message().to_owned()))?;
     #[cfg(test)]
-    let builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
+    let mut builder = if let Ok(profile) = std::env::var("MEETILY_NEMOTRON_PROFILE") {
         builder.with_profiling(profile).map_err(|e| anyhow::anyhow!(e.message().to_owned()))?
     } else { builder };
     Ok(builder.commit_from_file(path)?)
