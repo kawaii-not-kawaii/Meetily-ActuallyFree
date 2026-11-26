@@ -70,11 +70,18 @@ fn initialize_library(path: &std::path::Path) -> Result<(), String> {
         .map_err(|error| format!("Cannot load bundled ONNX Runtime: {error}. Repair/reinstall and restart Meetily."))?;
     unsafe { library.get::<unsafe extern "system" fn() -> *const std::ffi::c_void>(b"OrtGetApiBase\0") }
         .map_err(|error| format!("Invalid bundled ONNX Runtime: {error}"))?;
+    // ort rc.15's init_from returns Result<_, LoadDynamicError> while build()
+    // returns Result<_, ort::Error>: unify into String to keep the messages.
     let environment = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         ort::init_from(path.to_string_lossy().into_owned())
-            .and_then(|builder| builder.with_telemetry(false).build())
-    })).map_err(|_| "ONNX Runtime initialization failed. Repair/reinstall and restart Meetily.".to_string())?
-        .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())
+            .and_then(|builder| {
+                builder
+                    .with_telemetry(false)
+                    .build()
+                    .map_err(|error| error.to_string())
+            })
+    })).map_err(|_| "ONNX Runtime initialization failed. Repair/reinstall and restart Meetily.".to_string())?;
     // ort 2.0.0-rc.15 no longer reports whether an environment existed before
     // the bundled runtime was loaded; the dylib handle itself is process-global.
     let _ = ENVIRONMENT.set(Ok(environment));
