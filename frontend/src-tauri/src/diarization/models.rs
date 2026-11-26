@@ -4,7 +4,7 @@
 
 use anyhow::{anyhow, Result};
 use ndarray::Array3;
-use ort::execution_providers::CPUExecutionProvider;
+use ort::ep::CPU as CPUExecutionProvider;
 use ort::inputs;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
@@ -51,10 +51,15 @@ impl DiarizationModels {
             }
         }
 
+        // ort 2.0.0-rc.15: sessions need an explicit Environment, and builder
+        // setters return a non-Send recoverable error; keep the message only.
         let build = |path: &Path| -> Result<Session> {
-            Ok(Session::builder()?
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
-                .with_execution_providers(vec![CPUExecutionProvider::default().build()])?
+            let env = crate::onnx_runtime::environment()?;
+            Ok(Session::builder(&env)?
+                .with_optimization_level(GraphOptimizationLevel::Level3)
+                .map_err(|e| anyhow!(e.message().to_owned()))?
+                .with_execution_providers(vec![CPUExecutionProvider::default().build()])
+                .map_err(|e| anyhow!(e.message().to_owned()))?
                 .commit_from_file(path)?)
         };
 
