@@ -81,9 +81,10 @@ fn initialize_library(path: &std::path::Path) -> Result<(), String> {
                     .build()
                     .map_err(|error| error.to_string())
             })
-    })).map_err(|_| "ONNX Runtime initialization failed. Repair/reinstall and restart Meetily.".to_string())?;
+    })).map_err(|_| "ONNX Runtime initialization failed. Repair/reinstall and restart Meetily.".to_string())??;
     // ort 2.0.0-rc.15 no longer reports whether an environment existed before
     // the bundled runtime was loaded; the dylib handle itself is process-global.
+    // Only a successfully built environment is stored; the error propagates.
     let _ = ENVIRONMENT.set(Ok(environment));
     log::info!("Initialized verified bundled Windows ONNX Runtime");
     Ok(())
